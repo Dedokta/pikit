@@ -49,8 +49,10 @@ class DriveInfo:
         return f"<Drive {self.device} {self.name} {self.size_str}>"
 
 
-def list_usb_drives():
-    """Return list of DriveInfo for non-boot disks (USB, SD, card readers, etc.)."""
+def list_usb_drives(removable_only=True):
+    """Return list of DriveInfo for non-boot disks.
+    removable_only=True (default): USB bus type only — hides internal SATA/NVMe.
+    """
     ps = r"""
 # Exclude the disk(s) that contain the Windows boot/system partition.
 # This is safer than filtering by BusType, which misses many card readers.
@@ -110,7 +112,12 @@ $result | ConvertTo-Json -Depth 3
             ))
         # Filter out zero-size entries (empty card reader slots)
         out = [d for d in out if d.size_bytes > 0]
-        log.debug(f"list_usb_drives() — found {len(out)} drive(s): {[str(d) for d in out]}")
+        # Optionally restrict to USB/removable drives only (hides internal SATA/NVMe)
+        if removable_only:
+            out = [d for d in out if "[USB]" in d.name]
+        log.debug(f"list_usb_drives() — found {len(out)} drive(s):")
+        for d in out:
+            log.debug(f"  {d}  letters={d.letters}")
         return out
     except Exception:
         log.exception("list_usb_drives() failed")

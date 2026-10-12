@@ -3,13 +3,13 @@
 
 [Setup]
 AppName=PiKit
-AppVersion=1.0.11
+AppVersion=1.0.12
 AppPublisher=Illuminart
 AppPublisherURL=https://illuminart.com.au
 DefaultDirName={autopf}\PiKit
 DefaultGroupName=PiKit
 OutputDir=installer_out
-OutputBaseFilename=PiKit_Setup_1.0.11
+OutputBaseFilename=PiKit_Setup_1.0.12
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
