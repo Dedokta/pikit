@@ -5,7 +5,7 @@ import threading
 import customtkinter as ctk
 
 from .. import theme as T
-from ..widgets import DriveSelector, FilePickRow, ConfirmEntry, ProgressPanel
+from ..widgets import DriveSelector, FilePickRow, ProgressPanel
 from ..settings_mgr import Settings
 
 
@@ -52,15 +52,14 @@ class FlashView(ctk.CTkFrame):
                         fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
                         checkmark_color="#000").pack(anchor="w")
 
-        # ── Confirm + Flash ───────────────────────────────────────────────────
-        self._confirm = ConfirmEntry(
-            self,
-            confirm_text="FLASH",
-            button_text="⚡  Flash Image",
-            on_confirm=self._start_flash,
-            warn_msg="This will permanently erase all data on the selected drive.  Type FLASH to confirm.",
+        # ── Flash button ──────────────────────────────────────────────────────
+        self._flash_btn = ctk.CTkButton(
+            self, text="⚡  Flash Image", height=42,
+            font=T.FONT_TITLE, fg_color=T.ACCENT,
+            hover_color=T.ACCENT_HOVER, text_color="#000",
+            corner_radius=8, command=self._confirm_flash,
         )
-        self._confirm.pack(fill="x", pady=(0, 12))
+        self._flash_btn.pack(fill="x", pady=(0, 12))
 
         # ── Progress ──────────────────────────────────────────────────────────
         self._progress = ProgressPanel(self, on_cancel=self._cancel)
@@ -85,7 +84,51 @@ class FlashView(ctk.CTkFrame):
     # ── Events ────────────────────────────────────────────────────────────────
 
     def _on_drive_selected(self, drive):
-        pass  # Could auto-populate confirm text with drive letter
+        pass
+
+    def _confirm_flash(self):
+        """Show a warning popup before starting the flash."""
+        drive = self._drives.selected_drive()
+        img   = self._img_pick.get()
+
+        if not img or not os.path.exists(img):
+            self._progress.error("Image file not found")
+            return
+        if not drive:
+            self._progress.error("No drive selected")
+            return
+
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("Confirm Flash")
+        dlg.geometry("420x200")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        dlg.lift()
+        dlg.focus()
+
+        ctk.CTkLabel(dlg, text="⚠  This will permanently erase all data on:",
+                     font=T.FONT_LABEL, text_color=T.WARN).pack(pady=(24, 4))
+        ctk.CTkLabel(dlg, text=f"{drive.name}  ({drive.letters_str})",
+                     font=T.FONT_TITLE, text_color=T.TEXT).pack()
+        ctk.CTkLabel(dlg, text="Are you sure?",
+                     font=T.FONT_BODY, text_color=T.TEXT_DIM).pack(pady=(6, 0))
+
+        btn_row = ctk.CTkFrame(dlg, fg_color="transparent")
+        btn_row.pack(pady=20)
+
+        ctk.CTkButton(btn_row, text="Cancel", width=110, height=36,
+                      font=T.FONT_BODY, fg_color=T.BG_INPUT,
+                      hover_color=T.BORDER, text_color=T.TEXT_DIM,
+                      corner_radius=6, command=dlg.destroy).pack(side="left", padx=(0, 12))
+
+        def _go():
+            dlg.destroy()
+            self._start_flash()
+
+        ctk.CTkButton(btn_row, text="Yes, Flash It", width=130, height=36,
+                      font=T.FONT_LABEL, fg_color=T.ACCENT,
+                      hover_color=T.ACCENT_HOVER, text_color="#000",
+                      corner_radius=6, command=_go).pack(side="left")
 
     def _start_flash(self):
         if self._running:
@@ -105,6 +148,7 @@ class FlashView(ctk.CTkFrame):
 
         self._cancel_ev.clear()
         self._running = True
+        self._flash_btn.configure(state="disabled")
         self._progress.start(f"Flashing to {drive.device}…")
 
         threading.Thread(target=self._flash_worker,
@@ -132,6 +176,7 @@ class FlashView(ctk.CTkFrame):
             self._dispatch(self._progress.error, f"Error: {e}")
         finally:
             self._running = False
+            self._dispatch(self._flash_btn.configure, {"state": "normal"})
 
     def _verify(self, img_path, drive):
         """Read back written data and compare MD5 against source."""
