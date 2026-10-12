@@ -5,6 +5,7 @@ Views are lazy-loaded — only instantiated on first visit, so startup
 only pays the cost of the Flash view (the default).
 """
 import os
+import queue
 import threading
 import customtkinter as ctk
 
@@ -40,11 +41,12 @@ class PiKitApp(ctk.CTk):
         self.minsize(920, 640)
 
         self._settings    = Settings()
-        self._views       = {}   # key → CTkFrame instance (created on first visit)
+        self._views       = {}
         self._nav_btns    = {}
         self._active      = None
         self._update_btn  = None
         self._pending_upd = None
+        self._update_q    = queue.SimpleQueue()
 
         geom = self._settings.get("window_geometry") or "1020x680"
         self.geometry(geom)
@@ -52,6 +54,7 @@ class PiKitApp(ctk.CTk):
 
         self._build_layout()
         self._switch("flash")
+        self._poll_update_q()
 
         # Check for updates 2 s after launch
         self.after(2000, self._start_update_check)
@@ -94,8 +97,9 @@ class PiKitApp(ctk.CTk):
         # Bottom bar — update button + version
         self._sidebar_bottom = ctk.CTkFrame(self._sidebar, fg_color="transparent")
         self._sidebar_bottom.pack(side="bottom", fill="x", padx=10, pady=10)
-        ctk.CTkLabel(self._sidebar_bottom, text=f"v{APP_VERSION}",
-                     font=T.FONT_SMALL, text_color=T.TEXT_MUTED).pack(pady=(0, 4))
+        self._ver_lbl = ctk.CTkLabel(self._sidebar_bottom, text=f"v{APP_VERSION}",
+                                     font=T.FONT_SMALL, text_color=T.TEXT_MUTED)
+        self._ver_lbl.pack(pady=(0, 4))
 
         # Content area
         self._content = ctk.CTkFrame(self, fg_color=T.BG_MAIN, corner_radius=0)
@@ -139,12 +143,33 @@ class PiKitApp(ctk.CTk):
 
     # ── Update checker ────────────────────────────────────────────────────────
 
+    def _poll_update_q(self):
+        """Drain update callbacks on the main thread — avoids threading issues."""
+        try:
+            while True:
+                fn, args = self._update_q.get_nowait()
+                fn(*args)
+        except queue.Empty:
+            pass
+        self.after(100, self._poll_update_q)
+
     def _start_update_check(self):
+        self._ver_lbl.configure(text=f"v{APP_VERSION}  checking…", text_color=T.TEXT_DIM)
         from .updater import check_for_update
         check_for_update(
-            on_update_available=lambda v, n, u: self.after(
-                0, self._show_update_banner, v, n, u),
+            on_update_available=lambda v, n, u: self._update_q.put(
+                (self._show_update_banner, (v, n, u))),
+            on_up_to_date=lambda v: self._update_q.put(
+                (self._show_up_to_date, ())),
+            on_error=lambda e: self._update_q.put(
+                (self._show_up_to_date, ())),
         )
+
+    def _show_up_to_date(self):
+        self._ver_lbl.configure(text=f"v{APP_VERSION}  ✓", text_color=T.SUCCESS)
+        # Fade back to plain version label after 4 s
+        self.after(4000, lambda: self._ver_lbl.configure(
+            text=f"v{APP_VERSION}", text_color=T.TEXT_MUTED))
 
     def _show_update_banner(self, version, notes, download_url):
         if self._update_btn:
