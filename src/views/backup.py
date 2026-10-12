@@ -270,6 +270,7 @@ class BackupView(ctk.CTkFrame):
                 from ..shrink import shrink_image
 
                 def log_cb(line):
+                    log.info(f"PiShrink: {line}")
                     self.after(0, self._progress.log, line)
 
                 self.after(0, self._progress.update, 0, 1, 0, "Shrinking…")

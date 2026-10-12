@@ -40,8 +40,11 @@ _wsl_cache = None  # cached after first check — WSL doesn't change mid-session
 def check_wsl():
     """Return (available: bool, distros: list[str]). Result cached after first call."""
     global _wsl_cache
+    from .logger import log
     if _wsl_cache is not None:
+        log.debug(f"check_wsl() — returning cache: {_wsl_cache}")
         return _wsl_cache
+    log.debug("check_wsl() — running wsl --list")
     try:
         r = subprocess.run(
             ["wsl", "--list", "--quiet"],
@@ -51,7 +54,9 @@ def check_wsl():
         )
         distros = [l.strip().rstrip("\x00") for l in r.stdout.splitlines() if l.strip().rstrip("\x00")]
         _wsl_cache = (len(distros) > 0, distros)
+        log.debug(f"check_wsl() — result: {_wsl_cache}")
     except Exception:
+        log.exception("check_wsl() failed")
         _wsl_cache = (False, [])
     return _wsl_cache
 
@@ -66,6 +71,7 @@ def shrink_image(img_path: str, log_cb=None, cancel_event: threading.Event = Non
     Returns True on success, False on failure.
     """
     pishrink = get_asset_path("pishrink.sh")
+    log.info(f"shrink_image: pishrink path = {pishrink!r}  exists={os.path.exists(pishrink)}")
     if not os.path.exists(pishrink):
         if log_cb:
             log_cb(f"[ERROR] pishrink.sh not found at {pishrink}")
@@ -74,7 +80,8 @@ def shrink_image(img_path: str, log_cb=None, cancel_event: threading.Event = Non
     wsl_script = win_to_wsl(pishrink)
     wsl_img    = win_to_wsl(img_path)
 
-    cmd = ["wsl", "bash", wsl_script, wsl_img]
+    cmd = ["wsl", "-u", "root", "bash", wsl_script, wsl_img]
+    log.info(f"shrink_image: cmd = {cmd}")
 
     if log_cb:
         log_cb(f"Running: {' '.join(cmd)}")
