@@ -188,8 +188,11 @@ class PiKitApp(ctk.CTk):
         self._update_btn.pack(fill="x", pady=(0, 4))
 
     def _open_update_dialog(self):
-        version, notes, url = self._pending_upd
-        _UpdateDialog(self, version, notes, url)
+        try:
+            version, notes, url = self._pending_upd
+            _UpdateDialog(self, version, notes, url)
+        except Exception:
+            log.exception("Failed to open update dialog")
 
     # ── Window geometry ───────────────────────────────────────────────────────
 
@@ -215,11 +218,17 @@ class _UpdateDialog(ctk.CTkToplevel):
     def __init__(self, parent, version, notes, download_url):
         super().__init__(parent, fg_color=T.BG_MAIN)
         self.title(f"PiKit {version} available")
-        self.geometry("520x400")
         self.resizable(False, False)
+
+        # Centre on parent
+        w, h = 520, 400
+        px = parent.winfo_x() + (parent.winfo_width()  - w) // 2
+        py = parent.winfo_y() + (parent.winfo_height() - h) // 2
+        self.geometry(f"{w}x{h}+{px}+{py}")
+
+        self.after(50, self.lift)
+        self.after(50, self.focus)
         self.grab_set()
-        self.lift()
-        self.focus()
 
         self._download_url = download_url
 
