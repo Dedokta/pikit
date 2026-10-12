@@ -7,6 +7,7 @@ import customtkinter as ctk
 from .. import theme as T
 from ..widgets import DriveSelector, ProgressPanel
 from ..settings_mgr import Settings
+from ..logger import log
 
 
 class PipelineView(ctk.CTkFrame):
@@ -203,6 +204,7 @@ class PipelineView(ctk.CTkFrame):
             "folder":   folder,
             "name":     name,
         }
+        log.info(f"PipelineView._start: drive={drive}  folder={folder}  name={name}  opts={opts}")
         threading.Thread(target=self._worker, args=(drive, opts), daemon=True).start()
 
     def _worker(self, drive, opts):
@@ -212,6 +214,7 @@ class PipelineView(ctk.CTkFrame):
         img_path = os.path.join(folder, f"{name}.img")
         gz_path  = os.path.join(folder, f"{name}.img.gz")
 
+        log.info(f"PipelineView._worker starting: {drive.device} → {img_path}")
         try:
             # Step 1: Backup
             self._set_step_state(0, "running")
@@ -301,8 +304,10 @@ class PipelineView(ctk.CTkFrame):
             self.after(0, self._progress.finish, "Pipeline complete")
 
         except InterruptedError:
+            log.info("PipelineView._worker: cancelled")
             self.after(0, self._progress.error, "Cancelled")
         except Exception as e:
+            log.exception(f"PipelineView._worker failed: {e}")
             self.after(0, self._progress.error, f"Error: {e}")
             for i in range(4):
                 dot, _, _ = self._step_status[i]

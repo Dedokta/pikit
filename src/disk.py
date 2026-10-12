@@ -11,9 +11,12 @@ import subprocess
 import json
 import time
 import gzip
+import logging
 
 import win32file
 import win32con
+
+log = logging.getLogger("pikit")
 
 SECTOR    = 512
 BUFFER    = 4 * 1024 * 1024  # 4 MB read/write chunks
@@ -74,14 +77,17 @@ $result = foreach ($d in $drives) {
 }
 $result | ConvertTo-Json -AsArray -Depth 3
 """
+    log.debug("list_usb_drives() — running PowerShell")
     try:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
             capture_output=True, text=True, timeout=15,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
+        log.debug(f"list_usb_drives() stdout={r.stdout[:200]!r}  stderr={r.stderr[:200]!r}")
         raw = r.stdout.strip()
         if not raw:
+            log.debug("list_usb_drives() — empty stdout, returning []")
             return []
         data = json.loads(raw)
         if isinstance(data, dict):
@@ -102,8 +108,10 @@ $result | ConvertTo-Json -AsArray -Depth 3
                 size_bytes = d.get("Size", 0),
                 letters    = list(letters),
             ))
+        log.debug(f"list_usb_drives() — found {len(out)} drive(s): {[str(d) for d in out]}")
         return out
     except Exception:
+        log.exception("list_usb_drives() failed")
         return []
 
 
@@ -121,10 +129,12 @@ def get_smart_backup_size(device_path):
 
     Caller should fall back to full disk size if None is returned.
     """
+    log.debug(f"get_smart_backup_size({device_path})")
     try:
         with open(device_path, "rb") as f:
             mbr = f.read(SECTOR)
         if len(mbr) < SECTOR or mbr[510:512] != b"\x55\xAA":
+            log.debug("get_smart_backup_size — bad MBR signature")
             return None
         max_end = 0
         for i in range(4):
@@ -137,8 +147,11 @@ def get_smart_backup_size(device_path):
             end         = lba_start + num_sectors
             if end > max_end:
                 max_end = end
-        return max_end * SECTOR if max_end > 0 else None
+        result = max_end * SECTOR if max_end > 0 else None
+        log.debug(f"get_smart_backup_size — {result} bytes ({(result or 0)/1e9:.2f} GB)")
+        return result
     except Exception:
+        log.exception(f"get_smart_backup_size({device_path}) failed")
         return None
 
 
@@ -171,17 +184,22 @@ def backup_disk(drive: DriveInfo, out_path: str, smart=True,
 
     Returns the path written, or raises on error.
     """
+    log.info(f"backup_disk: {drive.device}  smart={smart}  → {out_path}")
     if smart:
         total = get_smart_backup_size(drive.device)
         if total:
             # Round up to next sector boundary (should already be aligned)
             total = ((total + SECTOR - 1) // SECTOR) * SECTOR
+            log.info(f"backup_disk: smart boundary = {total} bytes ({total/1e9:.2f} GB)")
         else:
+            log.warning("backup_disk: smart boundary unavailable — falling back to full disk")
             smart = False  # fall back
 
     if not smart or not total:
         total = drive.size_bytes or get_disk_size(drive.index)
+        log.info(f"backup_disk: full disk size = {total} bytes ({total/1e9:.2f} GB)")
 
+    log.debug(f"backup_disk: opening {drive.device}")
     handle = win32file.CreateFile(
         drive.device,
         win32file.GENERIC_READ,

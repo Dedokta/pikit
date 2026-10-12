@@ -7,6 +7,7 @@ import customtkinter as ctk
 from .. import theme as T
 from ..widgets import DriveSelector, ProgressPanel
 from ..settings_mgr import Settings
+from ..logger import log
 
 
 class BackupView(ctk.CTkFrame):
@@ -167,6 +168,7 @@ class BackupView(ctk.CTkFrame):
 
         os.makedirs(folder, exist_ok=True)
 
+        log.info(f"BackupView._start: drive={drive}  folder={folder}  name={name}")
         opts = {
             "smart":    self._smart_var.get(),
             "shrink":   self._shrink_var.get(),
@@ -194,6 +196,7 @@ class BackupView(ctk.CTkFrame):
         img_path = os.path.join(folder, f"{name}.img")
         gz_path  = os.path.join(folder, f"{name}.img.gz")
 
+        log.info(f"BackupView._worker starting: {drive.device} → {img_path}")
         try:
             # Step 1: backup
             from ..disk import backup_disk
@@ -263,9 +266,11 @@ class BackupView(ctk.CTkFrame):
             self.after(0, self._progress.finish, "Backup complete")
 
         except InterruptedError:
+            log.info("BackupView._worker: cancelled")
             self.after(0, self._progress.error, "Cancelled")
             self._cleanup(img_path)
         except Exception as e:
+            log.exception(f"BackupView._worker failed: {e}")
             self.after(0, self._progress.error, f"Error: {e}")
         finally:
             self._running = False
