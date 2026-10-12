@@ -167,9 +167,6 @@ class PiKitApp(ctk.CTk):
 
     def _show_up_to_date(self):
         self._ver_lbl.configure(text=f"v{APP_VERSION}  ✓", text_color=T.SUCCESS)
-        # Fade back to plain version label after 4 s
-        self.after(4000, lambda: self._ver_lbl.configure(
-            text=f"v{APP_VERSION}", text_color=T.TEXT_MUTED))
 
     def _show_update_banner(self, version, notes, download_url):
         self._ver_lbl.configure(text=f"v{APP_VERSION}", text_color=T.TEXT_MUTED)
