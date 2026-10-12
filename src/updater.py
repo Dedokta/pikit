@@ -43,6 +43,37 @@ def clear_pending_update():
         pass
 
 
+def spawn_installer_and_exit(installer_path):
+    """
+    Spawn a batch file that waits 4 s (for the EXE lock to release),
+    runs the installer silently, then relaunches PiKit.
+    Calls os._exit(0) immediately so the current process releases its file lock.
+    """
+    import sys, subprocess
+
+    exe = sys.executable
+    log = os.path.join(os.environ.get("APPDATA", tempfile.gettempdir()),
+                       "PiKit", "update_log.txt")
+    bat = os.path.join(tempfile.gettempdir(), "pikit_update.bat")
+
+    lines = [
+        "@echo off",
+        f'echo Update started > "{log}"',
+        "timeout /t 4 /nobreak >> nul",
+        f'echo Running installer >> "{log}"',
+        f'"{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART',
+        f'echo Installer exit code: %ERRORLEVEL% >> "{log}"',
+        f'if %ERRORLEVEL% EQU 0 start "" "{exe}"',
+        f'if not %ERRORLEVEL% EQU 0 echo FAILED - not relaunching >> "{log}"',
+        'del "%~f0"',
+    ]
+    with open(bat, "w") as f:
+        f.write("\r\n".join(lines))
+
+    subprocess.Popen(["cmd", "/c", bat], creationflags=subprocess.CREATE_NO_WINDOW)
+    os._exit(0)
+
+
 def _parse_version(tag: str):
     """Convert 'v1.2.3' or '1.2.3' to (1, 2, 3) tuple."""
     return tuple(int(x) for x in tag.lstrip("v").split("."))

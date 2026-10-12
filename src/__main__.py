@@ -85,48 +85,15 @@ def setup_logging():
 
 def apply_pending_update():
     """
-    If a downloaded installer is waiting, run it now and exit.
-    Shows a splash so the user knows to wait and doesn't reopen PiKit
-    (which would lock the EXE and block the installer).
+    Fallback: if a downloaded installer is still waiting from a previous session,
+    run it now and exit before any UI loads.
     """
-    from .updater import get_pending_update, clear_pending_update
+    from .updater import get_pending_update, clear_pending_update, spawn_installer_and_exit
     installer = get_pending_update()
     if not installer:
         return
-
-    # Clear before launching — prevents infinite loop if script fails to clean up.
     clear_pending_update()
-
-    import subprocess, tempfile
-    exe  = sys.executable
-    log  = os.path.join(os.environ.get("APPDATA", tempfile.gettempdir()),
-                        "PiKit", "update_log.txt")
-    bat  = os.path.join(tempfile.gettempdir(), "pikit_update.bat")
-
-    # Batch file: no execution-policy issues, simpler than PS1.
-    # timeout /t 4 gives Windows time to release the EXE lock after we exit.
-    # Logs installer exit code so we can debug failures.
-    lines = [
-        "@echo off",
-        f'echo Update started > "{log}"',
-        "timeout /t 4 /nobreak >> nul",
-        f'echo Running installer >> "{log}"',
-        f'"{installer}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART',
-        f'echo Installer exit code: %ERRORLEVEL% >> "{log}"',
-        f'if %ERRORLEVEL% EQU 0 start "" "{exe}"',
-        f'if not %ERRORLEVEL% EQU 0 echo FAILED - not relaunching >> "{log}"',
-        'del "%~f0"',
-    ]
-    with open(bat, "w") as f:
-        f.write("\r\n".join(lines))
-
-    # CREATE_NO_WINDOW only — DETACHED_PROCESS can break elevated token
-    # inheritance, causing the installer to run without admin and fail silently.
-    subprocess.Popen(
-        ["cmd", "/c", bat],
-        creationflags=subprocess.CREATE_NO_WINDOW,
-    )
-    os._exit(0)
+    spawn_installer_and_exit(installer)
 
 
 def main():

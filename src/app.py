@@ -312,7 +312,11 @@ class _UpdateDialog(ctk.CTkToplevel):
         self.after(3000, self._restart_now)
 
     def _restart_now(self):
-        """Exit now — update installer runs on next launch via pending_update.txt."""
-        import os
+        """Spawn installer batch file directly and exit — PiKit relaunches automatically."""
+        from .updater import get_pending_update, clear_pending_update, spawn_installer_and_exit
+        installer = get_pending_update()
+        if not installer:
+            return
+        clear_pending_update()
         self.master.destroy()
-        os._exit(0)
+        spawn_installer_and_exit(installer)
