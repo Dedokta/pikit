@@ -13,6 +13,9 @@ import os
 import subprocess
 import sys
 import threading
+import logging
+
+log = logging.getLogger("pikit")
 
 
 def get_asset_path(filename):
@@ -40,7 +43,6 @@ _wsl_cache = None  # cached after first check — WSL doesn't change mid-session
 def check_wsl():
     """Return (available: bool, distros: list[str]). Result cached after first call."""
     global _wsl_cache
-    from .logger import log
     if _wsl_cache is not None:
         log.debug(f"check_wsl() — returning cache: {_wsl_cache}")
         return _wsl_cache
