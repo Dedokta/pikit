@@ -26,7 +26,6 @@ class PipelineView(ctk.CTkFrame):
         # ── Drive ─────────────────────────────────────────────────────────────
         self._drives = DriveSelector(self, on_select=None)
         self._drives.pack(fill="x", pady=(0, 12))
-        self._drives.refresh()
 
         # ── Output ────────────────────────────────────────────────────────────
         out_card = ctk.CTkFrame(self, fg_color=T.BG_CARD, corner_radius=8,

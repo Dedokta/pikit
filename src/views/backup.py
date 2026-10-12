@@ -26,7 +26,6 @@ class BackupView(ctk.CTkFrame):
         # ── Drive selector ────────────────────────────────────────────────────
         self._drives = DriveSelector(self, on_select=self._on_drive_selected)
         self._drives.pack(fill="x", pady=(0, 12))
-        self._drives.refresh()
 
         # ── Output location ───────────────────────────────────────────────────
         out_card = ctk.CTkFrame(self, fg_color=T.BG_CARD, corner_radius=8,

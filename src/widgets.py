@@ -43,18 +43,30 @@ class DriveSelector(ctk.CTkFrame):
         self._empty_lbl.pack(pady=20)
 
     def refresh(self):
+        """Non-blocking refresh — runs PowerShell in a background thread."""
+        import threading
         from .disk import list_usb_drives
+
+        # Clear existing rows immediately
         for row in self._rows:
             row.destroy()
         self._rows.clear()
         self._selected = None
+        self._empty_lbl.configure(text="Scanning…")
+        self._empty_lbl.pack(pady=20)
 
-        drives = list_usb_drives()
+        def _worker():
+            drives = list_usb_drives()
+            self.after(0, self._populate, drives)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _populate(self, drives):
         if not drives:
+            self._empty_lbl.configure(text="No removable drives detected.")
             self._empty_lbl.pack(pady=20)
             return
         self._empty_lbl.pack_forget()
-
         for drive in drives:
             row = _DriveRow(self._list, drive, self._pick)
             row.pack(fill="x", pady=2, padx=2)

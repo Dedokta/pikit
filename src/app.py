@@ -127,8 +127,9 @@ class PiKitApp(ctk.CTk):
         self._views[key].grid()
         self._nav_btns[key].configure(fg_color=T.BG_CARD, text_color=T.TEXT)
 
+        # Defer on_activate so the frame renders before any blocking calls
         if hasattr(self._views[key], "on_activate"):
-            self._views[key].on_activate()
+            self.after(50, self._views[key].on_activate)
 
     # ── Update checker ────────────────────────────────────────────────────────
 
