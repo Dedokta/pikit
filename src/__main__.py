@@ -94,52 +94,38 @@ def apply_pending_update():
     if not installer:
         return
 
-    # Clear before launching — prevents infinite loop if PS1 fails to clean up.
+    # Clear before launching — prevents infinite loop if script fails to clean up.
     clear_pending_update()
 
-    import subprocess, tempfile, tkinter as tk
-    exe = sys.executable
-    ps1 = os.path.join(tempfile.gettempdir(), "pikit_update.ps1")
+    import subprocess, tempfile
+    exe  = sys.executable
+    log  = os.path.join(os.environ.get("APPDATA", tempfile.gettempdir()),
+                        "PiKit", "update_log.txt")
+    bat  = os.path.join(tempfile.gettempdir(), "pikit_update.bat")
 
-    # PS1 sleeps 6 s — splash shows for 3 s, then PiKit exits, giving 3 s
-    # for Windows to fully release the EXE lock before the installer runs.
-    script = (
-        "Start-Sleep -Seconds 6\n"
-        f"Start-Process -FilePath '{installer}'"
-        f" -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART')"
-        f" -Wait\n"
-        f"Start-Process -FilePath '{exe}'\n"
-        f"Remove-Item -Path '{ps1}' -Force -ErrorAction SilentlyContinue\n"
-    )
-    with open(ps1, "w") as f:
-        f.write(script)
+    # Batch file: no execution-policy issues, simpler than PS1.
+    # timeout /t 4 gives Windows time to release the EXE lock after we exit.
+    # Logs installer exit code so we can debug failures.
+    lines = [
+        "@echo off",
+        f'echo Update started > "{log}"',
+        "timeout /t 4 /nobreak >> nul",
+        f'echo Running installer >> "{log}"',
+        f'"{installer}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART',
+        f'echo Installer exit code: %ERRORLEVEL% >> "{log}"',
+        f'if %ERRORLEVEL% EQU 0 start "" "{exe}"',
+        f'if not %ERRORLEVEL% EQU 0 echo FAILED - not relaunching >> "{log}"',
+        'del "%~f0"',
+    ]
+    with open(bat, "w") as f:
+        f.write("\r\n".join(lines))
 
+    # CREATE_NO_WINDOW only — DETACHED_PROCESS can break elevated token
+    # inheritance, causing the installer to run without admin and fail silently.
     subprocess.Popen(
-        ["powershell", "-NoProfile", "-NonInteractive",
-         "-ExecutionPolicy", "Bypass",
-         "-WindowStyle", "Hidden", "-File", ps1],
-        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+        ["cmd", "/c", bat],
+        creationflags=subprocess.CREATE_NO_WINDOW,
     )
-
-    # Show a splash so the user knows to wait and doesn't open PiKit again.
-    splash = tk.Tk()
-    splash.overrideredirect(True)
-    splash.configure(bg="#0d0d0d")
-    splash.attributes("-topmost", True)
-    w, h = 340, 110
-    sw, sh = splash.winfo_screenwidth(), splash.winfo_screenheight()
-    splash.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
-    border = tk.Frame(splash, bg="#22c55e", padx=1, pady=1)
-    border.pack(fill="both", expand=True)
-    inner = tk.Frame(border, bg="#0d0d0d")
-    inner.pack(fill="both", expand=True)
-    tk.Label(inner, text="Installing update…",
-             font=("Segoe UI", 14, "bold"), bg="#0d0d0d", fg="#f1f5f9").pack(expand=True)
-    tk.Label(inner, text="PiKit will relaunch automatically",
-             font=("Segoe UI", 9), bg="#0d0d0d", fg="#6b7280").pack(pady=(0, 10))
-    splash.update()
-    splash.after(3000, lambda: os._exit(0))
-    splash.mainloop()
     os._exit(0)
 
 
