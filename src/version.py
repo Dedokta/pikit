@@ -1,2 +1,2 @@
-APP_VERSION = "1.0.10"
+APP_VERSION = "1.0.11"
 GITHUB_REPO = "Dedokta/pikit"

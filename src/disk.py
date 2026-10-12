@@ -63,8 +63,8 @@ $result = foreach ($d in $drives) {
     $letters = @()
     try {
         $letters = Get-Partition -DiskNumber $d.Number -EA SilentlyContinue |
-                   Where-Object { $_.DriveLetter } |
-                   ForEach-Object { $_.DriveLetter + ':' }
+                   Where-Object { $_.DriveLetter -and ($_.DriveLetter -ne [char]0) } |
+                   ForEach-Object { [string]$_.DriveLetter + ':' }
     } catch {}
     [PSCustomObject]@{
         Index   = [int]$d.Number
@@ -108,6 +108,8 @@ $result | ConvertTo-Json -Depth 3
                 size_bytes = d.get("Size", 0),
                 letters    = list(letters),
             ))
+        # Filter out zero-size entries (empty card reader slots)
+        out = [d for d in out if d.size_bytes > 0]
         log.debug(f"list_usb_drives() — found {len(out)} drive(s): {[str(d) for d in out]}")
         return out
     except Exception:

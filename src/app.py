@@ -12,13 +12,14 @@ from . import theme as T
 from .settings_mgr import Settings
 from .version import APP_VERSION
 
+from .logger import log
+
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
 _NAV = [
     ("⚡  Flash",    "flash"),
     ("💾  Backup",   "backup"),
-    ("🔄  Pipeline", "pipeline"),
     ("⚙   Settings", "settings"),
 ]
 
@@ -28,8 +29,6 @@ def _view_class(key):
         from .views.flash    import FlashView;    return FlashView
     if key == "backup":
         from .views.backup   import BackupView;   return BackupView
-    if key == "pipeline":
-        from .views.pipeline import PipelineView; return PipelineView
     if key == "settings":
         from .views.settings import SettingsView; return SettingsView
 
@@ -117,16 +116,23 @@ class PiKitApp(ctk.CTk):
 
         # Create view on first visit
         if key not in self._views:
-            cls  = _view_class(key)
-            view = cls(self._content, self._settings)
-            view.grid(row=0, column=0, sticky="nsew", padx=28, pady=20)
-            view.grid_remove()
-            self._views[key] = view
+            log.debug(f"Creating view: {key}")
+            try:
+                cls  = _view_class(key)
+                view = cls(self._content, self._settings)
+                view.grid(row=0, column=0, sticky="nsew", padx=28, pady=20)
+                view.grid_remove()
+                self._views[key] = view
+                log.debug(f"View created OK: {key}")
+            except Exception:
+                log.exception(f"CRASH creating view: {key}")
+                raise
 
         self._active = key
         self._views[key].grid()
         self._nav_btns[key].configure(fg_color=T.BG_CARD, text_color=T.TEXT)
 
+        log.debug(f"Switched to: {key}")
         # Defer on_activate so the frame renders before any blocking calls
         if hasattr(self._views[key], "on_activate"):
             self.after(50, self._views[key].on_activate)
@@ -157,15 +163,22 @@ class PiKitApp(ctk.CTk):
         version, notes, url = self._pending_upd
         _UpdateDialog(self, version, notes, url, on_install=self._quit_for_update)
 
-    def _quit_for_update(self):
-        """Close cleanly, then relaunch once the silent installer finishes."""
+    def _quit_for_update(self, installer_pid=None):
+        """Close cleanly, wait for installer to finish, then relaunch."""
         import sys, subprocess
         exe = sys.executable  # path to PiKit.exe in its install dir
 
-        # Detached cmd: wait 20 s for installer to finish, then relaunch
-        cmd = f'ping -n 20 127.0.0.1 >nul & start "" "{exe}"'
+        # PowerShell: wait for installer process to exit, then relaunch PiKit.
+        # Running elevated (inherited), so Start-Process launches PiKit without UAC prompt.
+        if installer_pid:
+            wait = f"Wait-Process -Id {installer_pid} -Timeout 120 -ErrorAction SilentlyContinue; "
+        else:
+            wait = "Start-Sleep 30; "
+        ps = wait + f'Start-Process \\"{exe}\\"'
+
         subprocess.Popen(
-            ["cmd", "/c", cmd],
+            ["powershell", "-NoProfile", "-NonInteractive",
+             "-WindowStyle", "Hidden", "-Command", ps],
             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
         )
         self.destroy()
@@ -252,7 +265,8 @@ class _UpdateDialog(ctk.CTkToplevel):
                     self.after(0, self._status.configure,
                                {"text": f"Downloading… {done/1_048_576:.1f} MB"})
 
-                download_and_run_installer(self._download_url, progress_cb=progress)
+                self._installer_pid = download_and_run_installer(
+                    self._download_url, progress_cb=progress)
 
                 self.after(0, self._status.configure,
                            {"text": "Installing — closing PiKit…"})
@@ -268,4 +282,4 @@ class _UpdateDialog(ctk.CTkToplevel):
 
     def _finish(self):
         if self._on_install:
-            self._on_install()   # closes entire app so installer can run freely
+            self._on_install(getattr(self, "_installer_pid", None))

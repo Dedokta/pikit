@@ -16,7 +16,7 @@ class DriveSelector(ctk.CTkFrame):
     on_select(drive) callback fired when user picks a drive.
     """
 
-    def __init__(self, master, on_select=None, **kwargs):
+    def __init__(self, master, on_select=None, label="Target Drive", **kwargs):
         super().__init__(master, fg_color=T.BG_CARD, corner_radius=8,
                          border_width=1, border_color=T.BORDER, **kwargs)
         self._on_select = on_select
@@ -26,7 +26,7 @@ class DriveSelector(ctk.CTkFrame):
         # header
         hdr = ctk.CTkFrame(self, fg_color="transparent")
         hdr.pack(fill="x", padx=12, pady=(10, 4))
-        ctk.CTkLabel(hdr, text="Target Drive", font=T.FONT_LABEL,
+        ctk.CTkLabel(hdr, text=label, font=T.FONT_LABEL,
                      text_color=T.TEXT).pack(side="left")
         ctk.CTkButton(hdr, text="↺ Refresh", width=80, height=26,
                       font=T.FONT_SMALL, fg_color=T.BG_INPUT,
@@ -47,12 +47,13 @@ class DriveSelector(ctk.CTkFrame):
         Ignores the call if a scan is already in progress."""
         import threading
         from .disk import list_usb_drives
+        from .logger import log
 
         if getattr(self, "_scanning", False):
-            return   # already in flight — don't stack up another process
+            log.debug("DriveSelector.refresh() skipped — scan already in flight")
+            return
         self._scanning = True
 
-        # Clear existing rows immediately
         for row in self._rows:
             row.destroy()
         self._rows.clear()
@@ -61,16 +62,21 @@ class DriveSelector(ctk.CTkFrame):
         self._empty_lbl.pack(pady=20)
 
         def _worker():
-            drives = list_usb_drives()
+            log.debug("Drive scan started")
             try:
+                drives = list_usb_drives()
+                log.debug(f"Drive scan found: {[d.name for d in drives]}")
                 if self.winfo_exists():
                     self.after(0, self._populate, drives)
+                else:
+                    log.debug("Drive scan: widget destroyed before populate")
             except Exception:
-                pass
+                log.exception("Drive scan crashed")
             finally:
                 self._scanning = False
+                log.debug("Drive scan done")
 
-        threading.Thread(target=_worker, daemon=True).start()
+        threading.Thread(target=_worker, daemon=True, name="DriveScan").start()
 
     def _populate(self, drives):
         if not drives:
