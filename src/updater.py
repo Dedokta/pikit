@@ -62,31 +62,63 @@ def check_for_update(on_update_available, on_up_to_date=None, on_error=None):
 
 def download_and_run_installer(url: str, progress_cb=None):
     """
-    Download the installer to %TEMP% and launch it.
+    Download the installer via PowerShell (handles GitHub CDN redirects
+    reliably on Windows) then launch it silently.
 
     progress_cb(bytes_done, bytes_total)
-    Runs the installer — it will ask for UAC and replace the app.
     """
-    import os, tempfile, subprocess
+    import os, tempfile, subprocess, threading, time
 
     tmp = os.path.join(tempfile.gettempdir(), "PiKit_Update_Setup.exe")
 
-    req = urllib.request.Request(url, headers={"User-Agent": "PiKit-updater"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        total = int(resp.headers.get("Content-Length", 0))
-        done  = 0
-        with open(tmp, "wb") as f:
-            while True:
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                f.write(chunk)
-                done += len(chunk)
-                if progress_cb:
-                    progress_cb(done, total)
+    # Remove any previous partial download
+    try:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    except Exception:
+        pass
 
-    # /VERYSILENT — no wizard, no prompts, no progress window
-    # /NORESTART  — suppress any reboot prompt
+    # Get expected file size via HEAD so we can show progress
+    total = 0
+    try:
+        req = urllib.request.Request(url, method="HEAD",
+                                     headers={"User-Agent": "PiKit-updater"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            total = int(r.headers.get("Content-Length", 0))
+    except Exception:
+        pass
+
+    # Download using PowerShell — proven reliable with GitHub CDN on Windows
+    ps = (f'[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;'
+          f'Invoke-WebRequest -Uri "{url}" -OutFile "{tmp}" -UseBasicParsing')
+    proc = subprocess.Popen(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+
+    # Monitor file growth on a side thread for progress reporting
+    if progress_cb:
+        def _monitor():
+            while proc.poll() is None:
+                try:
+                    done = os.path.getsize(tmp) if os.path.exists(tmp) else 0
+                    progress_cb(done, total)
+                except Exception:
+                    pass
+                time.sleep(0.4)
+            # Final update
+            try:
+                progress_cb(os.path.getsize(tmp), total)
+            except Exception:
+                pass
+        threading.Thread(target=_monitor, daemon=True).start()
+
+    proc.wait(timeout=300)
+
+    if proc.returncode != 0:
+        raise RuntimeError("Download failed — PowerShell returned non-zero exit code")
+
+    # Launch silently — installer handles its own UAC prompt
     subprocess.Popen(
         [tmp, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
         creationflags=subprocess.CREATE_NO_WINDOW,
