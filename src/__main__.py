@@ -95,10 +95,13 @@ def apply_pending_update():
     if not installer:
         return
 
+    # Clear the pending flag NOW in Python before launching the script.
+    # If we leave it to the PS1 to delete, PiKit relaunches and loops forever.
+    clear_pending_update()
+
     import subprocess, tempfile
-    exe  = sys.executable
-    ps1  = os.path.join(tempfile.gettempdir(), "pikit_update.ps1")
-    pend = os.path.join(os.environ.get("APPDATA", ""), "PiKit", "pending_update.txt")
+    exe = sys.executable
+    ps1 = os.path.join(tempfile.gettempdir(), "pikit_update.ps1")
 
     script = (
         "Start-Sleep -Seconds 2\n"
@@ -106,7 +109,6 @@ def apply_pending_update():
         f" -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART')"
         f" -Wait\n"
         f"Start-Process -FilePath '{exe}'\n"
-        f"Remove-Item -Path '{pend}' -Force -ErrorAction SilentlyContinue\n"
         f"Remove-Item -Path '{ps1}' -Force -ErrorAction SilentlyContinue\n"
     )
     with open(ps1, "w") as f:
