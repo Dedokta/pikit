@@ -338,11 +338,20 @@ def flash_disk(img_path: str, drive: DriveInfo,
     )
 
     try:
-        open_fn  = gzip.open if is_gz else open
         src_done = 0
         start    = time.time()
 
-        with open_fn(img_path, "rb") as src:
+        # For .gz: open the raw file separately so we can track compressed
+        # bytes consumed (raw_f.tell()) rather than uncompressed bytes out.
+        # This keeps progress 0→100% correctly against the on-disk file size.
+        if is_gz:
+            raw_f = open(img_path, "rb")
+            src   = gzip.GzipFile(fileobj=raw_f)
+        else:
+            raw_f = None
+            src   = open(img_path, "rb")
+
+        with src:
             while True:
                 if cancel_event and cancel_event.is_set():
                     raise InterruptedError("Cancelled by user")
@@ -354,11 +363,13 @@ def flash_disk(img_path: str, drive: DriveInfo,
                 if rem:
                     data = data + b"\x00" * (SECTOR - rem)
                 win32file.WriteFile(handle, data)
-                src_done += len(data)
-                elapsed = time.time() - start
-                speed   = src_done / elapsed if elapsed > 0.1 else 0
+                src_done = raw_f.tell() if raw_f else src.tell()
+                elapsed  = time.time() - start
+                speed    = src_done / elapsed if elapsed > 0.1 else 0
                 if progress_cb:
                     progress_cb(src_done, total, speed)
+        if raw_f:
+            raw_f.close()
     finally:
         try:
             win32file.DeviceIoControl(handle, FSCTL_UNLOCK_VOLUME, None, 0, None)
