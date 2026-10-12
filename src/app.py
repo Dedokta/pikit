@@ -165,22 +165,34 @@ class PiKitApp(ctk.CTk):
 
     def _quit_for_update(self, installer_path=None):
         """Close PiKit, run installer, then relaunch PiKit."""
-        import sys, subprocess
+        import sys, subprocess, tempfile
         exe = sys.executable  # path to PiKit.exe in its install dir
 
-        # Detached PowerShell: runs AFTER this process exits so the EXE is not locked.
-        # Start-Process -Wait blocks until Inno Setup finishes, then relaunches PiKit.
+        # Write commands to a .ps1 file — avoids all inline quoting/escaping issues.
+        # 2-second sleep lets Windows release the EXE file lock after os._exit().
+        ps1 = os.path.join(tempfile.gettempdir(), "pikit_update.ps1")
         if installer_path:
-            ps = (f"Start-Process -FilePath '{installer_path}' "
-                  f"-ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' "
-                  f"-Wait; "
-                  f"Start-Process -FilePath '{exe}'")
+            script = (
+                "Start-Sleep -Seconds 2\n"
+                f"Start-Process -FilePath '{installer_path}'"
+                f" -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART')"
+                f" -Wait\n"
+                f"Start-Process -FilePath '{exe}'\n"
+                f"Remove-Item -Path '{ps1}' -Force -ErrorAction SilentlyContinue\n"
+            )
         else:
-            ps = f"Start-Sleep 30; Start-Process -FilePath '{exe}'"
+            script = (
+                "Start-Sleep -Seconds 30\n"
+                f"Start-Process -FilePath '{exe}'\n"
+                f"Remove-Item -Path '{ps1}' -Force -ErrorAction SilentlyContinue\n"
+            )
+
+        with open(ps1, "w") as f:
+            f.write(script)
 
         subprocess.Popen(
             ["powershell", "-NoProfile", "-NonInteractive",
-             "-WindowStyle", "Hidden", "-Command", ps],
+             "-WindowStyle", "Hidden", "-File", ps1],
             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
         )
         self.destroy()

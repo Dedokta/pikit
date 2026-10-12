@@ -1,5 +1,6 @@
 """Flash view — write a .img or .img.gz to an SD card."""
 import os
+import queue
 import threading
 import customtkinter as ctk
 
@@ -14,6 +15,8 @@ class FlashView(ctk.CTkFrame):
         self._settings  = settings
         self._cancel_ev = threading.Event()
         self._running   = False
+        self._q         = queue.SimpleQueue()
+        self._poll_q()
 
         # ── Title ──────────────────────────────────────────────────────────────
         ctk.CTkLabel(self, text="Flash Image to SD Card", font=T.FONT_H1,
@@ -63,6 +66,22 @@ class FlashView(ctk.CTkFrame):
         self._progress = ProgressPanel(self, on_cancel=self._cancel)
         self._progress.pack(fill="x")
 
+    # ── Thread-safe dispatch ──────────────────────────────────────────────────
+
+    def _poll_q(self):
+        """Drain the UI-update queue on the main thread (runs every 30 ms)."""
+        try:
+            while True:
+                fn, args = self._q.get_nowait()
+                fn(*args)
+        except queue.Empty:
+            pass
+        self.after(30, self._poll_q)
+
+    def _dispatch(self, fn, *args):
+        """Schedule a UI call safely from any thread."""
+        self._q.put((fn, args))
+
     # ── Events ────────────────────────────────────────────────────────────────
 
     def _on_drive_selected(self, drive):
@@ -96,21 +115,21 @@ class FlashView(ctk.CTkFrame):
         import hashlib
 
         def cb(done, total, speed):
-            self.after(0, self._progress.update, done, total, speed, "Writing…")
+            self._dispatch(self._progress.update, done, total, speed, "Writing…")
 
         try:
             flash_disk(img_path, drive, progress_cb=cb,
                        cancel_event=self._cancel_ev)
 
             if self._verify_var.get() and not self._cancel_ev.is_set():
-                self.after(0, self._progress.log, "Verifying…")
+                self._dispatch(self._progress.log, "Verifying…")
                 self._verify(img_path, drive)
             else:
-                self.after(0, self._progress.finish, "Flash complete")
+                self._dispatch(self._progress.finish, "Flash complete")
         except InterruptedError:
-            self.after(0, self._progress.error, "Cancelled")
+            self._dispatch(self._progress.error, "Cancelled")
         except Exception as e:
-            self.after(0, self._progress.error, f"Error: {e}")
+            self._dispatch(self._progress.error, f"Error: {e}")
         finally:
             self._running = False
 
@@ -144,14 +163,14 @@ class FlashView(ctk.CTkFrame):
                     break
                 disk_md5.update(data)
                 done += len(data)
-                self.after(0, self._progress.update, done, to_read, 0, "Verifying…")
+                self._dispatch(self._progress.update, done, to_read, 0, "Verifying…")
         finally:
             win32file.CloseHandle(handle)
 
         if src_digest == disk_md5.hexdigest():
-            self.after(0, self._progress.finish, "Flash complete — verified ✓")
+            self._dispatch(self._progress.finish, "Flash complete — verified ✓")
         else:
-            self.after(0, self._progress.error, "Verification FAILED — checksums differ")
+            self._dispatch(self._progress.error, "Verification FAILED — checksums differ")
 
     def _cancel(self):
         self._cancel_ev.set()

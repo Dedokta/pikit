@@ -1,5 +1,6 @@
 """Backup view — read SD card to .img, then optionally shrink + compress."""
 import os
+import queue
 import threading
 import datetime
 import customtkinter as ctk
@@ -16,6 +17,8 @@ class BackupView(ctk.CTkFrame):
         self._settings  = settings
         self._cancel_ev = threading.Event()
         self._running   = False
+        self._q         = queue.SimpleQueue()
+        self._poll_q()
 
         # ── Title ──────────────────────────────────────────────────────────────
         ctk.CTkLabel(self, text="Backup SD Card", font=T.FONT_H1,
@@ -140,6 +143,22 @@ class BackupView(ctk.CTkFrame):
         self._progress = ProgressPanel(self, on_cancel=self._cancel)
         self._progress.pack(fill="x")
 
+    # ── Thread-safe dispatch ──────────────────────────────────────────────────
+
+    def _poll_q(self):
+        """Drain the UI-update queue on the main thread (runs every 30 ms)."""
+        try:
+            while True:
+                fn, args = self._q.get_nowait()
+                fn(*args)
+        except queue.Empty:
+            pass
+        self.after(30, self._poll_q)
+
+    def _dispatch(self, fn, *args):
+        """Schedule a UI call safely from any thread."""
+        self._q.put((fn, args))
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _refresh_name(self):
@@ -161,8 +180,8 @@ class BackupView(ctk.CTkFrame):
             if not ok:
                 try:
                     if self.winfo_exists():
-                        self.after(0, self._shrink_var.set, False)
-                        self.after(0, self._shrink_cb.configure, {
+                        self._dispatch( self._shrink_var.set, False)
+                        self._dispatch( self._shrink_cb.configure, {
                             "state": "disabled",
                             "text": "Shrink — WSL not detected (install WSL to enable)"})
                 except Exception:
@@ -180,8 +199,8 @@ class BackupView(ctk.CTkFrame):
             "error":   (T.ERROR,      "✗", T.ERROR),
         }
         c, sym, tc = colours.get(state, colours["waiting"])
-        self.after(0, dot.configure, {"text": sym, "text_color": c})
-        self.after(0, lbl.configure, {"text_color": tc})
+        self._dispatch( dot.configure, {"text": sym, "text_color": c})
+        self._dispatch( lbl.configure, {"text_color": tc})
 
     def _on_drive_selected(self, drive):
         pass
@@ -243,11 +262,11 @@ class BackupView(ctk.CTkFrame):
             from ..disk import backup_disk
 
             def cb(done, total, speed):
-                self.after(0, self._progress.update, done, total, speed, "Backing up…")
+                self._dispatch( self._progress.update, done, total, speed, "Backing up…")
 
-            self.after(0, self._progress.log, f"Reading {drive.device} → {img_path}")
+            self._dispatch( self._progress.log, f"Reading {drive.device} → {img_path}")
             if opts["smart"]:
-                self.after(0, self._progress.log, "Smart mode: stopping at last partition boundary")
+                self._dispatch( self._progress.log, "Smart mode: stopping at last partition boundary")
 
             backup_disk(drive, img_path, smart=opts["smart"],
                         progress_cb=cb, cancel_event=self._cancel_ev)
@@ -256,33 +275,33 @@ class BackupView(ctk.CTkFrame):
                 raise InterruptedError()
 
             dur0 = time.time() - t0
-            self.after(0, self._step_status[0][2].configure, {"text": f"{dur0/60:.1f}m"})
+            self._dispatch( self._step_status[0][2].configure, {"text": f"{dur0/60:.1f}m"})
             self._set_step_state(0, "done")
             sz = os.path.getsize(img_path)
-            self.after(0, self._progress.log,
+            self._dispatch( self._progress.log,
                        f"Backup done — {sz/1_073_741_824:.2f} GB written")
 
             # Step 2: shrink
             if opts["shrink"]:
                 self._set_step_state(1, "running")
                 t1 = time.time()
-                self.after(0, self._progress.log, "Shrinking with PiShrink…")
+                self._dispatch( self._progress.log, "Shrinking with PiShrink…")
                 from ..shrink import shrink_image
 
                 def log_cb(line):
                     log.info(f"PiShrink: {line}")
-                    self.after(0, self._progress.log, line)
+                    self._dispatch( self._progress.log, line)
 
-                self.after(0, self._progress.update, 0, 1, 0, "Shrinking…")
+                self._dispatch( self._progress.update, 0, 1, 0, "Shrinking…")
                 ok = shrink_image(img_path, log_cb=log_cb,
                                   cancel_event=self._cancel_ev)
                 if not ok:
                     raise RuntimeError("PiShrink failed — see log")
                 dur1 = time.time() - t1
-                self.after(0, self._step_status[1][2].configure, {"text": f"{dur1/60:.1f}m"})
+                self._dispatch( self._step_status[1][2].configure, {"text": f"{dur1/60:.1f}m"})
                 self._set_step_state(1, "done")
                 sz2 = os.path.getsize(img_path)
-                self.after(0, self._progress.log,
+                self._dispatch( self._progress.log,
                            f"After shrink: {sz2/1_073_741_824:.2f} GB")
             else:
                 self._set_step_state(1, "skipped")
@@ -294,11 +313,11 @@ class BackupView(ctk.CTkFrame):
             if opts["compress"]:
                 self._set_step_state(2, "running")
                 t2 = time.time()
-                self.after(0, self._progress.log, "Compressing…")
+                self._dispatch( self._progress.log, "Compressing…")
                 from ..compress import compress_image
 
                 def cb2(done, total, speed):
-                    self.after(0, self._progress.update, done, total, speed,
+                    self._dispatch( self._progress.update, done, total, speed,
                                "Compressing…")
 
                 compress_image(img_path, gz_path,
@@ -306,36 +325,36 @@ class BackupView(ctk.CTkFrame):
                                progress_cb=cb2, cancel_event=self._cancel_ev)
 
                 dur2 = time.time() - t2
-                self.after(0, self._step_status[2][2].configure, {"text": f"{dur2/60:.1f}m"})
+                self._dispatch( self._step_status[2][2].configure, {"text": f"{dur2/60:.1f}m"})
                 self._set_step_state(2, "done")
                 sz3 = os.path.getsize(gz_path)
-                self.after(0, self._progress.log,
+                self._dispatch( self._progress.log,
                            f"Compressed: {sz3/1_073_741_824:.2f} GB → {gz_path}")
                 self._settings.add_recent_image(gz_path)
 
                 if not opts["keep_img"] and os.path.exists(img_path):
                     os.remove(img_path)
-                    self.after(0, self._progress.log, "Removed uncompressed .img")
+                    self._dispatch( self._progress.log, "Removed uncompressed .img")
             else:
                 self._set_step_state(2, "skipped")
                 self._settings.add_recent_image(img_path)
 
-            self.after(0, self._progress.finish, "Backup complete")
+            self._dispatch( self._progress.finish, "Backup complete")
 
         except InterruptedError:
             log.info("BackupView._worker: cancelled")
-            self.after(0, self._progress.error, "Cancelled")
+            self._dispatch( self._progress.error, "Cancelled")
             self._cleanup(img_path)
         except Exception as e:
             log.exception(f"BackupView._worker failed: {e}")
-            self.after(0, self._progress.error, f"Error: {e}")
+            self._dispatch( self._progress.error, f"Error: {e}")
             for i in range(3):
                 dot, _, _ = self._step_status[i]
                 if dot.cget("text") == "↻":
                     self._set_step_state(i, "error")
         finally:
             self._running = False
-            self.after(0, self._start_btn.configure, {"state": "normal"})
+            self._dispatch( self._start_btn.configure, {"state": "normal"})
 
     def _cleanup(self, img_path):
         try:
