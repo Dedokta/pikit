@@ -47,9 +47,15 @@ class DriveInfo:
 
 
 def list_usb_drives():
-    """Return list of DriveInfo for USB/SD removable disks."""
+    """Return list of DriveInfo for non-boot disks (USB, SD, card readers, etc.)."""
     ps = r"""
-$drives = Get-Disk | Where-Object { $_.BusType -in @('USB','SD','MMC') }
+# Exclude the disk(s) that contain the Windows boot/system partition.
+# This is safer than filtering by BusType, which misses many card readers.
+$bootDiskNumbers = @(
+    Get-Partition | Where-Object { $_.IsSystem -or $_.IsBoot } |
+        Select-Object -ExpandProperty DiskNumber -Unique
+)
+$drives = Get-Disk | Where-Object { $_.Number -notin $bootDiskNumbers }
 $result = foreach ($d in $drives) {
     $letters = @()
     try {
@@ -62,6 +68,7 @@ $result = foreach ($d in $drives) {
         Device  = ('\\.\PhysicalDrive' + $d.Number)
         Name    = [string]$d.FriendlyName
         Size    = [long]$d.Size
+        BusType = [string]$d.BusType
         Letters = @($letters)
     }
 }
@@ -84,10 +91,14 @@ $result | ConvertTo-Json -AsArray -Depth 3
             letters = d.get("Letters") or []
             if isinstance(letters, str):
                 letters = [letters] if letters else []
+            name = d.get("Name", "Unknown Drive")
+            bus  = d.get("BusType", "")
+            if bus and bus not in name:
+                name = f"{name}  [{bus}]"
             out.append(DriveInfo(
                 index      = d["Index"],
                 device     = d["Device"],
-                name       = d.get("Name", "Unknown Drive"),
+                name       = name,
                 size_bytes = d.get("Size", 0),
                 letters    = list(letters),
             ))

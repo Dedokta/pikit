@@ -3,13 +3,13 @@
 
 [Setup]
 AppName=PiKit
-AppVersion=1.0.0
+AppVersion=1.0.1
 AppPublisher=Illuminart
 AppPublisherURL=https://illuminart.com.au
 DefaultDirName={autopf}\PiKit
 DefaultGroupName=PiKit
 OutputDir=installer_out
-OutputBaseFilename=PiKit_Setup_1.0.0
+OutputBaseFilename=PiKit_Setup_1.0.1
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
@@ -37,7 +37,8 @@ Name: "{group}\Uninstall PiKit"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\PiKit"; Filename: "{app}\PiKit.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\PiKit.exe"; Description: "Launch PiKit"; Flags: nowait postinstall skipifsilent
+; PiKit requires elevation — launching from Start Menu will trigger UAC normally.
+; Auto-launch from installer is disabled to avoid elevation conflict (error 740).
 
 [UninstallDelete]
 ; Remove AppData settings on uninstall (optional — comment out to preserve)
