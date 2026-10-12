@@ -47,10 +47,12 @@ class PiKitApp(ctk.CTk):
         self._update_btn  = None
         self._pending_upd = None
         self._update_q    = queue.SimpleQueue()
+        self._geom_id     = None
 
-        geom = self._settings.get("window_geometry") or "1020x680"
+        geom = self._settings.get("window_geometry") or "1020x680+100+100"
         self.geometry(geom)
-        self.bind("<Configure>", self._on_resize)
+        self.bind("<Configure>", self._on_configure)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._build_layout()
         self._switch("flash")
@@ -189,11 +191,22 @@ class PiKitApp(ctk.CTk):
         version, notes, url = self._pending_upd
         _UpdateDialog(self, version, notes, url)
 
-    # ── Resize ────────────────────────────────────────────────────────────────
+    # ── Window geometry ───────────────────────────────────────────────────────
 
-    def _on_resize(self, _):
-        geom = f"{self.winfo_width()}x{self.winfo_height()}"
+    def _on_configure(self, _):
+        """Debounce geometry saves — fires on every pixel of resize/move."""
+        if self._geom_id:
+            self.after_cancel(self._geom_id)
+        self._geom_id = self.after(400, self._save_geometry)
+
+    def _save_geometry(self):
+        self._geom_id = None
+        geom = f"{self.winfo_width()}x{self.winfo_height()}+{self.winfo_x()}+{self.winfo_y()}"
         self._settings.set("window_geometry", geom)
+
+    def _on_close(self):
+        self._save_geometry()
+        self.destroy()
 
 
 # ── Update dialog ──────────────────────────────────────────────────────────────
@@ -266,32 +279,31 @@ class _UpdateDialog(ctk.CTkToplevel):
                 def progress(done, total):
                     pct = done / total if total else 0
                     self.after(0, self._bar.set, pct)
-                    self.after(0, self._status.configure,
-                               {"text": f"Downloading… {done/1_048_576:.1f} MB"})
+                    self.after(0, lambda: self._status.configure(
+                        text=f"Downloading… {done/1_048_576:.1f} MB"))
 
                 path = download_installer(self._download_url, progress_cb=progress)
                 set_pending_update(path)
 
                 self.after(0, self._on_downloaded)
             except Exception as e:
-                self.after(0, self._status.configure,
-                           {"text": f"Download failed: {e}", "text_color": T.ERROR})
-                self.after(0, self._dl_btn.configure,
-                           {"state": "normal", "text": "Retry"})
+                self.after(0, lambda: self._status.configure(
+                    text=f"Download failed: {e}", text_color=T.ERROR))
+                self.after(0, lambda: self._dl_btn.configure(
+                    state="normal", text="Retry"))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_downloaded(self):
-        """Download complete — tell user to restart, keep PiKit open."""
+        """Download complete — auto-restart after 3 s."""
         self._bar.set(1.0)
-        self._status.configure(text="Downloaded — restart PiKit to install.",
+        self._status.configure(text="Downloaded — restarting in 3 seconds…",
                                text_color=T.SUCCESS)
-        self._dl_btn.configure(state="normal", text="Restart Now",
-                               fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
-                               command=self._restart_now)
+        self._dl_btn.configure(state="disabled", text="Restarting…")
+        self.after(3000, self._restart_now)
 
     def _restart_now(self):
-        """User clicked Restart Now — just exit, update applies on next launch."""
+        """Exit now — update installer runs on next launch via pending_update.txt."""
         import os
         self.master.destroy()
         os._exit(0)
