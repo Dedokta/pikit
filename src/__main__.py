@@ -86,15 +86,29 @@ def main():
     if not is_admin():
         elevate()
 
+    debug = "--debug" in sys.argv
     setup_logging()
+
+    from .logger import setup as log_setup, log
+    log_setup(debug=debug)
+    log.info(f"Admin={is_admin()}  args={sys.argv}")
+
     splash = show_splash()
 
-    # Heavy imports happen here — splash is already visible
+    log.info("Importing app…")
     from .app import PiKitApp
 
+    log.info("Creating main window…")
     app = PiKitApp()
+    # splash is tk.Tk() — destroying it nullifies tkinter's _default_root,
+    # breaking font creation in any lazy-loaded CTk widget.
+    # Re-establish app as the default root immediately after.
+    import tkinter as _tk
     splash.destroy()
+    _tk._default_root = app
+    log.info("Entering mainloop")
     app.mainloop()
+    log.info("Mainloop exited cleanly")
 
 
 if __name__ == "__main__":

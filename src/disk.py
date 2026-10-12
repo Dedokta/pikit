@@ -75,7 +75,7 @@ $result = foreach ($d in $drives) {
         Letters = @($letters)
     }
 }
-$result | ConvertTo-Json -AsArray -Depth 3
+$result | ConvertTo-Json -Depth 3
 """
     log.debug("list_usb_drives() — running PowerShell")
     try:
