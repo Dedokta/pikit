@@ -35,19 +35,25 @@ def win_to_wsl(win_path):
     return path
 
 
+_wsl_cache = None  # cached after first check — WSL doesn't change mid-session
+
 def check_wsl():
-    """Return (available: bool, distros: list[str])."""
+    """Return (available: bool, distros: list[str]). Result cached after first call."""
+    global _wsl_cache
+    if _wsl_cache is not None:
+        return _wsl_cache
     try:
         r = subprocess.run(
             ["wsl", "--list", "--quiet"],
             capture_output=True, text=True, timeout=10,
-            encoding="utf-16-le",    # wsl --list outputs UTF-16 LE
+            encoding="utf-16-le",
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
         distros = [l.strip().rstrip("\x00") for l in r.stdout.splitlines() if l.strip().rstrip("\x00")]
-        return len(distros) > 0, distros
+        _wsl_cache = (len(distros) > 0, distros)
     except Exception:
-        return False, []
+        _wsl_cache = (False, [])
+    return _wsl_cache
 
 
 def shrink_image(img_path: str, log_cb=None, cancel_event: threading.Event = None) -> bool:

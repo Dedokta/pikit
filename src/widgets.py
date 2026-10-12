@@ -43,9 +43,14 @@ class DriveSelector(ctk.CTkFrame):
         self._empty_lbl.pack(pady=20)
 
     def refresh(self):
-        """Non-blocking refresh — runs PowerShell in a background thread."""
+        """Non-blocking refresh — runs PowerShell in a background thread.
+        Ignores the call if a scan is already in progress."""
         import threading
         from .disk import list_usb_drives
+
+        if getattr(self, "_scanning", False):
+            return   # already in flight — don't stack up another process
+        self._scanning = True
 
         # Clear existing rows immediately
         for row in self._rows:
@@ -58,11 +63,12 @@ class DriveSelector(ctk.CTkFrame):
         def _worker():
             drives = list_usb_drives()
             try:
-                # Widget may have been destroyed if user switched tabs quickly
                 if self.winfo_exists():
                     self.after(0, self._populate, drives)
             except Exception:
                 pass
+            finally:
+                self._scanning = False
 
         threading.Thread(target=_worker, daemon=True).start()
 
