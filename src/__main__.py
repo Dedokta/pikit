@@ -7,6 +7,7 @@ checks for admin, elevates if needed, then loads the main app.
 import sys
 import ctypes
 import os
+import subprocess
 
 
 def is_admin() -> bool:
@@ -82,9 +83,49 @@ def setup_logging():
     threading.excepthook    = _thread_hook
 
 
+def apply_pending_update():
+    """
+    If a downloaded installer is waiting, run it now and exit.
+    Called before any UI loads so PiKit.exe is not locked by tkinter/CTk.
+    The PS1 script: sleep 2s (lets this process exit + release lock),
+    run installer silently, then relaunch PiKit.
+    """
+    from .updater import get_pending_update, clear_pending_update
+    installer = get_pending_update()
+    if not installer:
+        return
+
+    import subprocess, tempfile
+    exe  = sys.executable
+    ps1  = os.path.join(tempfile.gettempdir(), "pikit_update.ps1")
+    pend = os.path.join(os.environ.get("APPDATA", ""), "PiKit", "pending_update.txt")
+
+    script = (
+        "Start-Sleep -Seconds 2\n"
+        f"Start-Process -FilePath '{installer}'"
+        f" -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART')"
+        f" -Wait\n"
+        f"Start-Process -FilePath '{exe}'\n"
+        f"Remove-Item -Path '{pend}' -Force -ErrorAction SilentlyContinue\n"
+        f"Remove-Item -Path '{ps1}' -Force -ErrorAction SilentlyContinue\n"
+    )
+    with open(ps1, "w") as f:
+        f.write(script)
+
+    subprocess.Popen(
+        ["powershell", "-NoProfile", "-NonInteractive",
+         "-WindowStyle", "Hidden", "-File", ps1],
+        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+    )
+    os._exit(0)
+
+
 def main():
     if not is_admin():
         elevate()
+
+    # Apply any downloaded update before anything else loads (no EXE lock yet)
+    apply_pending_update()
 
     debug = "--debug" in sys.argv
     setup_logging()

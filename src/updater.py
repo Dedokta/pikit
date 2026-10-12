@@ -9,7 +9,38 @@ import urllib.request
 import urllib.error
 import json
 
+import tempfile
+
 from .version import APP_VERSION, GITHUB_REPO
+
+# ── Pending-update helpers ─────────────────────────────────────────────────────
+
+def _pending_file():
+    d = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "PiKit")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, "pending_update.txt")
+
+def get_pending_update():
+    """Return installer path if one is waiting, else None."""
+    p = _pending_file()
+    try:
+        if os.path.exists(p):
+            path = open(p).read().strip()
+            if path and os.path.exists(path):
+                return path
+    except Exception:
+        pass
+    return None
+
+def set_pending_update(installer_path):
+    with open(_pending_file(), "w") as f:
+        f.write(installer_path)
+
+def clear_pending_update():
+    try:
+        os.remove(_pending_file())
+    except Exception:
+        pass
 
 
 def _parse_version(tag: str):
@@ -60,7 +91,7 @@ def check_for_update(on_update_available, on_up_to_date=None, on_error=None):
     threading.Thread(target=_worker, daemon=True).start()
 
 
-def download_and_run_installer(url: str, progress_cb=None):
+def download_installer(url: str, progress_cb=None):
     """
     Download the installer via PowerShell (handles GitHub CDN redirects
     reliably on Windows) then launch it silently.

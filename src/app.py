@@ -161,42 +161,7 @@ class PiKitApp(ctk.CTk):
 
     def _open_update_dialog(self):
         version, notes, url = self._pending_upd
-        _UpdateDialog(self, version, notes, url, on_install=self._quit_for_update)
-
-    def _quit_for_update(self, installer_path=None):
-        """Close PiKit, run installer, then relaunch PiKit."""
-        import sys, subprocess, tempfile
-        exe = sys.executable  # path to PiKit.exe in its install dir
-
-        # Write commands to a .ps1 file — avoids all inline quoting/escaping issues.
-        # 2-second sleep lets Windows release the EXE file lock after os._exit().
-        ps1 = os.path.join(tempfile.gettempdir(), "pikit_update.ps1")
-        if installer_path:
-            script = (
-                "Start-Sleep -Seconds 2\n"
-                f"Start-Process -FilePath '{installer_path}'"
-                f" -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART')"
-                f" -Wait\n"
-                f"Start-Process -FilePath '{exe}'\n"
-                f"Remove-Item -Path '{ps1}' -Force -ErrorAction SilentlyContinue\n"
-            )
-        else:
-            script = (
-                "Start-Sleep -Seconds 30\n"
-                f"Start-Process -FilePath '{exe}'\n"
-                f"Remove-Item -Path '{ps1}' -Force -ErrorAction SilentlyContinue\n"
-            )
-
-        with open(ps1, "w") as f:
-            f.write(script)
-
-        subprocess.Popen(
-            ["powershell", "-NoProfile", "-NonInteractive",
-             "-WindowStyle", "Hidden", "-File", ps1],
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
-        )
-        self.destroy()
-        os._exit(0)
+        _UpdateDialog(self, version, notes, url)
 
     # ── Resize ────────────────────────────────────────────────────────────────
 
@@ -208,7 +173,7 @@ class PiKitApp(ctk.CTk):
 # ── Update dialog ──────────────────────────────────────────────────────────────
 
 class _UpdateDialog(ctk.CTkToplevel):
-    def __init__(self, parent, version, notes, download_url, on_install=None):
+    def __init__(self, parent, version, notes, download_url):
         super().__init__(parent, fg_color=T.BG_MAIN)
         self.title(f"PiKit {version} available")
         self.geometry("520x400")
@@ -218,7 +183,6 @@ class _UpdateDialog(ctk.CTkToplevel):
         self.focus()
 
         self._download_url = download_url
-        self._on_install   = on_install
 
         # Header
         hdr = ctk.CTkFrame(self, fg_color=T.BG_CARD, corner_radius=0)
@@ -233,14 +197,14 @@ class _UpdateDialog(ctk.CTkToplevel):
         # Release notes
         ctk.CTkLabel(self, text="What's new:", font=T.FONT_LABEL,
                      text_color=T.TEXT_DIM).pack(anchor="w", padx=20, pady=(14, 4))
-        box = ctk.CTkTextbox(self, height=160, font=T.FONT_MONO,
+        box = ctk.CTkTextbox(self, height=140, font=T.FONT_MONO,
                              fg_color=T.BG_CARD, text_color=T.TEXT,
                              border_width=0, wrap="word")
         box.pack(fill="x", padx=20)
         box.insert("end", notes.strip() or "No release notes.")
         box.configure(state="disabled")
 
-        # Progress
+        # Progress bar (hidden until download starts)
         self._bar = ctk.CTkProgressBar(self, height=6, corner_radius=3,
                                        fg_color=T.BORDER, progress_color=T.ACCENT)
         self._bar.set(0)
@@ -271,7 +235,7 @@ class _UpdateDialog(ctk.CTkToplevel):
         self._bar.set(0)
 
         def worker():
-            from .updater import download_and_run_installer
+            from .updater import download_installer, set_pending_update
             try:
                 def progress(done, total):
                     pct = done / total if total else 0
@@ -279,13 +243,10 @@ class _UpdateDialog(ctk.CTkToplevel):
                     self.after(0, self._status.configure,
                                {"text": f"Downloading… {done/1_048_576:.1f} MB"})
 
-                self._installer_path = download_and_run_installer(
-                    self._download_url, progress_cb=progress)
+                path = download_installer(self._download_url, progress_cb=progress)
+                set_pending_update(path)
 
-                self.after(0, self._status.configure,
-                           {"text": "Downloaded — closing PiKit to install…"})
-                # Short pause so the user sees the message, then exit cleanly
-                self.after(1200, self._finish)
+                self.after(0, self._on_downloaded)
             except Exception as e:
                 self.after(0, self._status.configure,
                            {"text": f"Download failed: {e}", "text_color": T.ERROR})
@@ -294,6 +255,17 @@ class _UpdateDialog(ctk.CTkToplevel):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _finish(self):
-        if self._on_install:
-            self._on_install(getattr(self, "_installer_path", None))
+    def _on_downloaded(self):
+        """Download complete — tell user to restart, keep PiKit open."""
+        self._bar.set(1.0)
+        self._status.configure(text="Downloaded — restart PiKit to install.",
+                               text_color=T.SUCCESS)
+        self._dl_btn.configure(state="normal", text="Restart Now",
+                               fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
+                               command=self._restart_now)
+
+    def _restart_now(self):
+        """User clicked Restart Now — just exit, update applies on next launch."""
+        import os
+        self.master.destroy()
+        os._exit(0)
