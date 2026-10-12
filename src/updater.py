@@ -4,11 +4,11 @@ updater.py — Background GitHub release checker.
 Calls the GitHub releases API on startup, compares against APP_VERSION,
 and fires a callback if a newer version is available.
 """
+import os
 import threading
 import urllib.request
 import urllib.error
 import json
-
 import tempfile
 
 from .version import APP_VERSION, GITHUB_REPO
