@@ -78,6 +78,25 @@ class SettingsView(ctk.CTkFrame):
         self._section(parent, "WSL")
         self._wsl_status(parent)
 
+        # ── Updates ───────────────────────────────────────────────────────────
+        self._section(parent, "Updates")
+        from ..version import APP_VERSION, GITHUB_REPO
+        ctk.CTkLabel(parent, text=f"Installed: v{APP_VERSION}   ·   {GITHUB_REPO}",
+                     font=T.FONT_SMALL, text_color=T.TEXT_DIM,
+                     anchor="w").pack(anchor="w", pady=(0, 8))
+
+        btn_row = ctk.CTkFrame(parent, fg_color="transparent")
+        btn_row.pack(anchor="w", pady=(0, 6))
+        self._check_btn = ctk.CTkButton(btn_row, text="Check for updates",
+                                        height=34, width=160, font=T.FONT_BODY,
+                                        fg_color=T.BG_INPUT, hover_color=T.BORDER,
+                                        text_color=T.TEXT, corner_radius=6,
+                                        command=self._manual_check)
+        self._check_btn.pack(side="left")
+        self._update_status = ctk.CTkLabel(btn_row, text="", font=T.FONT_SMALL,
+                                           text_color=T.TEXT_DIM)
+        self._update_status.pack(side="left", padx=(12, 0))
+
         # ── Reset ─────────────────────────────────────────────────────────────
         self._section(parent, "Reset")
         ctk.CTkButton(parent, text="Reset all settings to defaults",
@@ -144,6 +163,39 @@ class SettingsView(ctk.CTkFrame):
         ctk.CTkLabel(parent, text=msg, font=T.FONT_SMALL,
                      text_color=colour, justify="left",
                      anchor="w").pack(anchor="w")
+
+    def _manual_check(self):
+        self._check_btn.configure(state="disabled")
+        self._update_status.configure(text="Checking…", text_color=T.TEXT_DIM)
+
+        from ..updater import check_for_update
+
+        def up_to_date(latest):
+            self.after(0, self._update_status.configure,
+                       {"text": f"✓  You're on the latest version (v{latest})",
+                        "text_color": T.SUCCESS})
+            self.after(0, self._check_btn.configure, {"state": "normal"})
+
+        def update_available(version, notes, url):
+            self.after(0, self._update_status.configure,
+                       {"text": f"↑  v{version} is available",
+                        "text_color": T.WARN})
+            self.after(0, self._check_btn.configure, {"state": "normal"})
+            # Also trigger the sidebar banner via the root app
+            root = self.winfo_toplevel()
+            if hasattr(root, "_show_update_banner"):
+                self.after(0, root._show_update_banner, version, notes, url)
+
+        def error(msg):
+            self.after(0, self._update_status.configure,
+                       {"text": f"✗  {msg}", "text_color": T.ERROR})
+            self.after(0, self._check_btn.configure, {"state": "normal"})
+
+        check_for_update(
+            on_update_available=update_available,
+            on_up_to_date=up_to_date,
+            on_error=error,
+        )
 
     def _reset(self):
         for key, val in DEFAULTS.items():

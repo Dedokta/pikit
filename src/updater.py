@@ -17,13 +17,13 @@ def _parse_version(tag: str):
     return tuple(int(x) for x in tag.lstrip("v").split("."))
 
 
-def check_for_update(on_update_available, on_error=None):
+def check_for_update(on_update_available, on_up_to_date=None, on_error=None):
     """
     Spawn a background thread that checks GitHub for a newer release.
 
     on_update_available(version: str, notes: str, download_url: str)
-        Called on the background thread — caller must marshal to UI thread.
-    on_error(msg: str)  — optional, called if check fails silently.
+    on_up_to_date(latest_version: str)  — called when already on latest
+    on_error(msg: str)
     """
     def _worker():
         url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -36,18 +36,22 @@ def check_for_update(on_update_available, on_error=None):
             notes       = data.get("body", "")
             assets      = data.get("assets", [])
 
-            # Find the installer asset
             download_url = next(
                 (a["browser_download_url"] for a in assets
                  if a["name"].endswith(".exe")),
-                data.get("html_url", ""),   # fall back to release page
+                data.get("html_url", ""),
             )
 
             if not latest_tag:
+                if on_error:
+                    on_error("No releases found on GitHub")
                 return
 
             if _parse_version(latest_tag) > _parse_version(APP_VERSION):
                 on_update_available(latest_tag.lstrip("v"), notes, download_url)
+            else:
+                if on_up_to_date:
+                    on_up_to_date(latest_tag.lstrip("v"))
 
         except Exception as e:
             if on_error:
