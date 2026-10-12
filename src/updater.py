@@ -118,8 +118,5 @@ def download_and_run_installer(url: str, progress_cb=None):
     if proc.returncode != 0:
         raise RuntimeError("Download failed — PowerShell returned non-zero exit code")
 
-    # Launch silently — installer handles its own UAC prompt
-    subprocess.Popen(
-        [tmp, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
-        creationflags=subprocess.CREATE_NO_WINDOW,
-    )
+    # Return the path — caller is responsible for launching after PiKit closes
+    return tmp

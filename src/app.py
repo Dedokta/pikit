@@ -163,18 +163,20 @@ class PiKitApp(ctk.CTk):
         version, notes, url = self._pending_upd
         _UpdateDialog(self, version, notes, url, on_install=self._quit_for_update)
 
-    def _quit_for_update(self, installer_pid=None):
-        """Close cleanly, wait for installer to finish, then relaunch."""
+    def _quit_for_update(self, installer_path=None):
+        """Close PiKit, run installer, then relaunch PiKit."""
         import sys, subprocess
         exe = sys.executable  # path to PiKit.exe in its install dir
 
-        # PowerShell: wait for installer process to exit, then relaunch PiKit.
-        # Running elevated (inherited), so Start-Process launches PiKit without UAC prompt.
-        if installer_pid:
-            wait = f"Wait-Process -Id {installer_pid} -Timeout 120 -ErrorAction SilentlyContinue; "
+        # Detached PowerShell: runs AFTER this process exits so the EXE is not locked.
+        # Start-Process -Wait blocks until Inno Setup finishes, then relaunches PiKit.
+        if installer_path:
+            ps = (f"Start-Process -FilePath '{installer_path}' "
+                  f"-ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' "
+                  f"-Wait; "
+                  f"Start-Process -FilePath '{exe}'")
         else:
-            wait = "Start-Sleep 30; "
-        ps = wait + f'Start-Process \\"{exe}\\"'
+            ps = f"Start-Sleep 30; Start-Process -FilePath '{exe}'"
 
         subprocess.Popen(
             ["powershell", "-NoProfile", "-NonInteractive",
@@ -265,11 +267,11 @@ class _UpdateDialog(ctk.CTkToplevel):
                     self.after(0, self._status.configure,
                                {"text": f"Downloading… {done/1_048_576:.1f} MB"})
 
-                self._installer_pid = download_and_run_installer(
+                self._installer_path = download_and_run_installer(
                     self._download_url, progress_cb=progress)
 
                 self.after(0, self._status.configure,
-                           {"text": "Installing — closing PiKit…"})
+                           {"text": "Downloaded — closing PiKit to install…"})
                 # Short pause so the user sees the message, then exit cleanly
                 self.after(1200, self._finish)
             except Exception as e:
@@ -282,4 +284,4 @@ class _UpdateDialog(ctk.CTkToplevel):
 
     def _finish(self):
         if self._on_install:
-            self._on_install(getattr(self, "_installer_pid", None))
+            self._on_install(getattr(self, "_installer_path", None))
