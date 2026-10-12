@@ -115,13 +115,21 @@ class SettingsView(ctk.CTkFrame):
         try:
             while True:
                 fn, args = self._q.get_nowait()
-                fn(*args)
+                try:
+                    fn(*args)
+                except Exception:
+                    pass
         except queue.Empty:
             pass
         self.after(30, self._poll_q)
 
     def _dispatch(self, fn, *args):
         self._q.put((fn, args))
+
+    def _maybe_show_banner(self, version, notes, url):
+        root = self.winfo_toplevel()
+        if hasattr(root, "_show_update_banner"):
+            root._show_update_banner(version, notes, url)
 
     # ── Widget helpers ─────────────────────────────────────────────────────────
 
@@ -205,9 +213,7 @@ class SettingsView(ctk.CTkFrame):
                            {"text": f"↑  v{version} is available",
                             "text_color": T.WARN})
             self._dispatch(self._check_btn.configure, {"state": "normal"})
-            root = self.winfo_toplevel()
-            if hasattr(root, "_show_update_banner"):
-                self._dispatch(root._show_update_banner, version, notes, url)
+            self._dispatch(self._maybe_show_banner, version, notes, url)
 
         def error(msg):
             self._dispatch(self._update_status.configure,

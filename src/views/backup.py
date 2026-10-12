@@ -150,7 +150,10 @@ class BackupView(ctk.CTkFrame):
         try:
             while True:
                 fn, args = self._q.get_nowait()
-                fn(*args)
+                try:
+                    fn(*args)
+                except Exception:
+                    pass
         except queue.Empty:
             pass
         self.after(30, self._poll_q)

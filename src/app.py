@@ -148,7 +148,10 @@ class PiKitApp(ctk.CTk):
         try:
             while True:
                 fn, args = self._update_q.get_nowait()
-                fn(*args)
+                try:
+                    fn(*args)
+                except Exception:
+                    pass
         except queue.Empty:
             pass
         self.after(100, self._poll_update_q)
