@@ -57,7 +57,12 @@ class DriveSelector(ctk.CTkFrame):
 
         def _worker():
             drives = list_usb_drives()
-            self.after(0, self._populate, drives)
+            try:
+                # Widget may have been destroyed if user switched tabs quickly
+                if self.winfo_exists():
+                    self.after(0, self._populate, drives)
+            except Exception:
+                pass
 
         threading.Thread(target=_worker, daemon=True).start()
 

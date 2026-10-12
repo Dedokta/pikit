@@ -158,7 +158,16 @@ class PiKitApp(ctk.CTk):
         _UpdateDialog(self, version, notes, url, on_install=self._quit_for_update)
 
     def _quit_for_update(self):
-        """Close the app cleanly so the silent installer can replace files."""
+        """Close cleanly, then relaunch once the silent installer finishes."""
+        import sys, subprocess
+        exe = sys.executable  # path to PiKit.exe in its install dir
+
+        # Detached cmd: wait 20 s for installer to finish, then relaunch
+        cmd = f'ping -n 20 127.0.0.1 >nul & start "" "{exe}"'
+        subprocess.Popen(
+            ["cmd", "/c", cmd],
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
+        )
         self.destroy()
         os._exit(0)
 

@@ -116,8 +116,6 @@ class BackupView(ctk.CTkFrame):
         self._progress = ProgressPanel(self, on_cancel=self._cancel)
         self._progress.pack(fill="x")
 
-        self._check_wsl()
-
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _refresh_name(self):
@@ -133,12 +131,20 @@ class BackupView(ctk.CTkFrame):
             self._folder_entry.insert(0, p)
 
     def _check_wsl(self):
+        import threading
         from ..shrink import check_wsl
-        ok, _ = check_wsl()
-        if not ok:
-            self._shrink_var.set(False)
-            self._shrink_cb.configure(state="disabled",
-                                      text="Shrink — WSL not detected (install WSL to enable)")
+        def _worker():
+            ok, _ = check_wsl()
+            if not ok:
+                try:
+                    if self.winfo_exists():
+                        self.after(0, self._shrink_var.set, False)
+                        self.after(0, self._shrink_cb.configure, {
+                            "state": "disabled",
+                            "text": "Shrink — WSL not detected (install WSL to enable)"})
+                except Exception:
+                    pass
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _on_drive_selected(self, drive):
         pass
