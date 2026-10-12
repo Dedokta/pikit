@@ -172,6 +172,7 @@ class PiKitApp(ctk.CTk):
             text=f"v{APP_VERSION}", text_color=T.TEXT_MUTED))
 
     def _show_update_banner(self, version, notes, download_url):
+        self._ver_lbl.configure(text=f"v{APP_VERSION}", text_color=T.TEXT_MUTED)
         if self._update_btn:
             return
         self._pending_upd = (version, notes, download_url)
