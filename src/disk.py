@@ -1,0 +1,285 @@
+"""
+disk.py — Physical disk detection, smart-boundary backup, and raw flash write.
+
+Smart backup: parses the MBR partition table to find where the last partition ends,
+then only reads up to that byte offset. Skips all empty trailing space.
+Typical saving: 20-25 GB on a 32 GB card used by a Pi OS image.
+"""
+import os
+import struct
+import subprocess
+import json
+import time
+import gzip
+
+import win32file
+import win32con
+
+SECTOR    = 512
+BUFFER    = 4 * 1024 * 1024  # 4 MB read/write chunks
+
+FSCTL_LOCK_VOLUME    = 0x00090018
+FSCTL_DISMOUNT_VOLUME= 0x00090020
+FSCTL_UNLOCK_VOLUME  = 0x0009001C
+
+
+# ── Drive detection ────────────────────────────────────────────────────────────
+
+class DriveInfo:
+    def __init__(self, index, device, name, size_bytes, letters):
+        self.index      = index
+        self.device     = device       # e.g. \\.\PhysicalDrive1
+        self.name       = name
+        self.size_bytes = int(size_bytes) if size_bytes else 0
+        self.letters    = letters      # e.g. ['E:']
+
+    @property
+    def size_str(self):
+        gb = self.size_bytes / 1_073_741_824
+        return f"{gb:.1f} GB"
+
+    @property
+    def letters_str(self):
+        return "  ".join(self.letters) if self.letters else "(no drive letter)"
+
+    def __repr__(self):
+        return f"<Drive {self.device} {self.name} {self.size_str}>"
+
+
+def list_usb_drives():
+    """Return list of DriveInfo for USB/SD removable disks."""
+    ps = r"""
+$drives = Get-Disk | Where-Object { $_.BusType -in @('USB','SD','MMC') }
+$result = foreach ($d in $drives) {
+    $letters = @()
+    try {
+        $letters = Get-Partition -DiskNumber $d.Number -EA SilentlyContinue |
+                   Where-Object { $_.DriveLetter } |
+                   ForEach-Object { $_.DriveLetter + ':' }
+    } catch {}
+    [PSCustomObject]@{
+        Index   = [int]$d.Number
+        Device  = ('\\.\PhysicalDrive' + $d.Number)
+        Name    = [string]$d.FriendlyName
+        Size    = [long]$d.Size
+        Letters = @($letters)
+    }
+}
+$result | ConvertTo-Json -AsArray -Depth 3
+"""
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        raw = r.stdout.strip()
+        if not raw:
+            return []
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            data = [data]
+        out = []
+        for d in data:
+            letters = d.get("Letters") or []
+            if isinstance(letters, str):
+                letters = [letters] if letters else []
+            out.append(DriveInfo(
+                index      = d["Index"],
+                device     = d["Device"],
+                name       = d.get("Name", "Unknown Drive"),
+                size_bytes = d.get("Size", 0),
+                letters    = list(letters),
+            ))
+        return out
+    except Exception:
+        return []
+
+
+# ── MBR partition boundary ─────────────────────────────────────────────────────
+
+def get_smart_backup_size(device_path):
+    """
+    Read the MBR from device_path, parse the four primary partition entries,
+    and return the byte offset of the end of the last partition.
+
+    Returns None if:
+    - MBR signature is invalid
+    - No valid partitions found
+    - Any read error
+
+    Caller should fall back to full disk size if None is returned.
+    """
+    try:
+        with open(device_path, "rb") as f:
+            mbr = f.read(SECTOR)
+        if len(mbr) < SECTOR or mbr[510:512] != b"\x55\xAA":
+            return None
+        max_end = 0
+        for i in range(4):
+            off   = 446 + i * 16
+            entry = mbr[off:off+16]
+            if entry[4] == 0:          # empty slot
+                continue
+            lba_start   = struct.unpack_from("<I", entry, 8)[0]
+            num_sectors = struct.unpack_from("<I", entry, 12)[0]
+            end         = lba_start + num_sectors
+            if end > max_end:
+                max_end = end
+        return max_end * SECTOR if max_end > 0 else None
+    except Exception:
+        return None
+
+
+def get_disk_size(index):
+    """Return total disk size in bytes via PowerShell."""
+    ps = f"(Get-Disk -Number {index}).Size"
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps],
+            capture_output=True, text=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        return int(r.stdout.strip())
+    except Exception:
+        return 0
+
+
+# ── Backup (disk → .img) ───────────────────────────────────────────────────────
+
+def backup_disk(drive: DriveInfo, out_path: str, smart=True,
+                progress_cb=None, cancel_event=None):
+    """
+    Read a physical disk to a raw .img file.
+
+    smart=True  — stop reading at the end of the last MBR partition (recommended).
+    smart=False — read the entire disk sector by sector.
+
+    progress_cb(bytes_done, bytes_total, speed_bps)
+    cancel_event: threading.Event — set to abort.
+
+    Returns the path written, or raises on error.
+    """
+    if smart:
+        total = get_smart_backup_size(drive.device)
+        if total:
+            # Round up to next sector boundary (should already be aligned)
+            total = ((total + SECTOR - 1) // SECTOR) * SECTOR
+        else:
+            smart = False  # fall back
+
+    if not smart or not total:
+        total = drive.size_bytes or get_disk_size(drive.index)
+
+    handle = win32file.CreateFile(
+        drive.device,
+        win32file.GENERIC_READ,
+        win32file.FILE_SHARE_READ | win32file.FILE_SHARE_WRITE,
+        None,
+        win32file.OPEN_EXISTING,
+        win32file.FILE_FLAG_NO_BUFFERING | win32file.FILE_FLAG_SEQUENTIAL_SCAN,
+        None,
+    )
+
+    start = time.time()
+    done  = 0
+
+    try:
+        os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+        with open(out_path, "wb") as f:
+            while True:
+                if cancel_event and cancel_event.is_set():
+                    raise InterruptedError("Cancelled by user")
+                chunk = min(BUFFER, total - done) if total else BUFFER
+                if chunk <= 0:
+                    break
+                # Align to sector size
+                chunk = ((chunk + SECTOR - 1) // SECTOR) * SECTOR
+                _, data = win32file.ReadFile(handle, chunk)
+                if not data:
+                    break
+                f.write(data)
+                done += len(data)
+                elapsed = time.time() - start
+                speed   = done / elapsed if elapsed > 0.1 else 0
+                if progress_cb:
+                    progress_cb(done, total, speed)
+                if total and done >= total:
+                    break
+    finally:
+        win32file.CloseHandle(handle)
+
+    return out_path
+
+
+# ── Flash (img or img.gz → disk) ──────────────────────────────────────────────
+
+def _gz_uncompressed_size(path):
+    """Read the ISIZE field from the gzip footer (last 4 bytes).
+    Valid for files < 4 GB uncompressed; Pi images are well within that."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(-4, 2)
+            return struct.unpack("<I", f.read(4))[0]
+    except Exception:
+        return 0
+
+
+def flash_disk(img_path: str, drive: DriveInfo,
+               progress_cb=None, cancel_event=None):
+    """
+    Write a .img or .img.gz file to a physical disk.
+
+    progress_cb(bytes_done, bytes_total, speed_bps)
+      bytes_done/total are compressed bytes when source is .gz
+      (accurate enough for a progress bar)
+    cancel_event: threading.Event
+
+    Locks and dismounts all volumes on the target disk before writing.
+    """
+    is_gz    = img_path.lower().endswith(".gz")
+    src_size = os.path.getsize(img_path)
+    # For progress we track compressed bytes in; close enough.
+    total    = src_size
+
+    handle = win32file.CreateFile(
+        drive.device,
+        win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+        win32file.FILE_SHARE_READ | win32file.FILE_SHARE_WRITE,
+        None,
+        win32file.OPEN_EXISTING,
+        win32file.FILE_FLAG_NO_BUFFERING | win32file.FILE_FLAG_WRITE_THROUGH,
+        None,
+    )
+
+    try:
+        win32file.DeviceIoControl(handle, FSCTL_LOCK_VOLUME,    None, 0, None)
+        win32file.DeviceIoControl(handle, FSCTL_DISMOUNT_VOLUME, None, 0, None)
+
+        open_fn  = gzip.open if is_gz else open
+        src_done = 0
+        start    = time.time()
+
+        with open_fn(img_path, "rb") as src:
+            while True:
+                if cancel_event and cancel_event.is_set():
+                    raise InterruptedError("Cancelled by user")
+                data = src.read(BUFFER)
+                if not data:
+                    break
+                # Pad to sector boundary
+                rem = len(data) % SECTOR
+                if rem:
+                    data = data + b"\x00" * (SECTOR - rem)
+                win32file.WriteFile(handle, data)
+                src_done += len(data)
+                elapsed = time.time() - start
+                speed   = src_done / elapsed if elapsed > 0.1 else 0
+                if progress_cb:
+                    progress_cb(src_done, total, speed)
+    finally:
+        try:
+            win32file.DeviceIoControl(handle, FSCTL_UNLOCK_VOLUME, None, 0, None)
+        except Exception:
+            pass
+        win32file.CloseHandle(handle)
