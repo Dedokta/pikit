@@ -86,25 +86,25 @@ def setup_logging():
 def apply_pending_update():
     """
     If a downloaded installer is waiting, run it now and exit.
-    Called before any UI loads so PiKit.exe is not locked by tkinter/CTk.
-    The PS1 script: sleep 2s (lets this process exit + release lock),
-    run installer silently, then relaunch PiKit.
+    Shows a splash so the user knows to wait and doesn't reopen PiKit
+    (which would lock the EXE and block the installer).
     """
     from .updater import get_pending_update, clear_pending_update
     installer = get_pending_update()
     if not installer:
         return
 
-    # Clear the pending flag NOW in Python before launching the script.
-    # If we leave it to the PS1 to delete, PiKit relaunches and loops forever.
+    # Clear before launching — prevents infinite loop if PS1 fails to clean up.
     clear_pending_update()
 
-    import subprocess, tempfile
+    import subprocess, tempfile, tkinter as tk
     exe = sys.executable
     ps1 = os.path.join(tempfile.gettempdir(), "pikit_update.ps1")
 
+    # PS1 sleeps 6 s — splash shows for 3 s, then PiKit exits, giving 3 s
+    # for Windows to fully release the EXE lock before the installer runs.
     script = (
-        "Start-Sleep -Seconds 2\n"
+        "Start-Sleep -Seconds 6\n"
         f"Start-Process -FilePath '{installer}'"
         f" -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART')"
         f" -Wait\n"
@@ -116,9 +116,30 @@ def apply_pending_update():
 
     subprocess.Popen(
         ["powershell", "-NoProfile", "-NonInteractive",
+         "-ExecutionPolicy", "Bypass",
          "-WindowStyle", "Hidden", "-File", ps1],
         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
     )
+
+    # Show a splash so the user knows to wait and doesn't open PiKit again.
+    splash = tk.Tk()
+    splash.overrideredirect(True)
+    splash.configure(bg="#0d0d0d")
+    splash.attributes("-topmost", True)
+    w, h = 340, 110
+    sw, sh = splash.winfo_screenwidth(), splash.winfo_screenheight()
+    splash.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+    border = tk.Frame(splash, bg="#22c55e", padx=1, pady=1)
+    border.pack(fill="both", expand=True)
+    inner = tk.Frame(border, bg="#0d0d0d")
+    inner.pack(fill="both", expand=True)
+    tk.Label(inner, text="Installing update…",
+             font=("Segoe UI", 14, "bold"), bg="#0d0d0d", fg="#f1f5f9").pack(expand=True)
+    tk.Label(inner, text="PiKit will relaunch automatically",
+             font=("Segoe UI", 9), bg="#0d0d0d", fg="#6b7280").pack(pady=(0, 10))
+    splash.update()
+    splash.after(3000, lambda: os._exit(0))
+    splash.mainloop()
     os._exit(0)
 
 
