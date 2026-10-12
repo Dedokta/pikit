@@ -250,6 +250,50 @@ def backup_disk(drive: DriveInfo, out_path: str, smart=True,
     return out_path
 
 
+# ── Volume lock helpers ────────────────────────────────────────────────────────
+
+def _lock_volumes(disk_index):
+    """
+    Lock and dismount every mounted volume on disk_index.
+
+    FSCTL_LOCK_VOLUME must be sent to the *volume* handle (e.g. \\.\L:),
+    not the physical-disk handle.  Returns the list of open volume handles
+    so the caller can close them after the write is done.
+    """
+    ps = f"""
+Get-Partition -DiskNumber {disk_index} -ErrorAction SilentlyContinue |
+    Where-Object {{ $_.DriveLetter -and ($_.DriveLetter -ne [char]0) }} |
+    ForEach-Object {{ $_.DriveLetter }}
+"""
+    locked = []
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps],
+            capture_output=True, text=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        letters = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+        log.info(f"_lock_volumes: disk {disk_index} letters={letters}")
+        for letter in letters:
+            vol = f"\\\\.\\{letter}:"
+            try:
+                h = win32file.CreateFile(
+                    vol,
+                    win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                    win32file.FILE_SHARE_READ | win32file.FILE_SHARE_WRITE,
+                    None, win32file.OPEN_EXISTING, 0, None,
+                )
+                win32file.DeviceIoControl(h, FSCTL_LOCK_VOLUME,    None, 0, None)
+                win32file.DeviceIoControl(h, FSCTL_DISMOUNT_VOLUME, None, 0, None)
+                locked.append(h)
+                log.info(f"_lock_volumes: locked {vol}")
+            except Exception as e:
+                log.warning(f"_lock_volumes: could not lock {vol}: {e}")
+    except Exception:
+        log.exception("_lock_volumes failed")
+    return locked
+
+
 # ── Flash (img or img.gz → disk) ──────────────────────────────────────────────
 
 def _gz_uncompressed_size(path):
@@ -280,6 +324,9 @@ def flash_disk(img_path: str, drive: DriveInfo,
     # For progress we track compressed bytes in; close enough.
     total    = src_size
 
+    # Lock every volume on the target disk BEFORE opening it for writing.
+    vol_handles = _lock_volumes(drive.index)
+
     handle = win32file.CreateFile(
         drive.device,
         win32file.GENERIC_READ | win32file.GENERIC_WRITE,
@@ -291,9 +338,6 @@ def flash_disk(img_path: str, drive: DriveInfo,
     )
 
     try:
-        win32file.DeviceIoControl(handle, FSCTL_LOCK_VOLUME,    None, 0, None)
-        win32file.DeviceIoControl(handle, FSCTL_DISMOUNT_VOLUME, None, 0, None)
-
         open_fn  = gzip.open if is_gz else open
         src_done = 0
         start    = time.time()
@@ -321,3 +365,8 @@ def flash_disk(img_path: str, drive: DriveInfo,
         except Exception:
             pass
         win32file.CloseHandle(handle)
+        for vh in vol_handles:
+            try:
+                win32file.CloseHandle(vh)
+            except Exception:
+                pass
