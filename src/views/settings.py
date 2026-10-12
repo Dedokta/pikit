@@ -1,5 +1,7 @@
 """Settings view."""
 import os
+import queue
+import threading
 import customtkinter as ctk
 
 from .. import theme as T
@@ -10,6 +12,8 @@ class SettingsView(ctk.CTkFrame):
     def __init__(self, master, settings: Settings, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self._settings = settings
+        self._q = queue.SimpleQueue()
+        self._poll_q()
 
         ctk.CTkLabel(self, text="Settings", font=T.FONT_H1,
                      text_color=T.TEXT).pack(anchor="w", pady=(8, 2))
@@ -105,6 +109,20 @@ class SettingsView(ctk.CTkFrame):
                       text_color=T.WARN, corner_radius=6,
                       command=self._reset).pack(anchor="w")
 
+    # ── Thread-safe dispatch ──────────────────────────────────────────────────
+
+    def _poll_q(self):
+        try:
+            while True:
+                fn, args = self._q.get_nowait()
+                fn(*args)
+        except queue.Empty:
+            pass
+        self.after(30, self._poll_q)
+
+    def _dispatch(self, fn, *args):
+        self._q.put((fn, args))
+
     # ── Widget helpers ─────────────────────────────────────────────────────────
 
     def _section(self, parent, title):
@@ -153,7 +171,6 @@ class SettingsView(ctk.CTkFrame):
         self._settings.set("compression_level", level_map.get(val, 6))
 
     def _wsl_status(self, parent):
-        import threading
         from ..shrink import check_wsl
         # Placeholder label updated once the background check finishes
         self._wsl_lbl = ctk.CTkLabel(parent, text="Checking WSL…",
@@ -168,12 +185,7 @@ class SettingsView(ctk.CTkFrame):
                    ", ".join(distros)) if ok else \
                   ("WSL not detected.  Install WSL to enable the shrink step.\n"
                    "Run:  wsl --install  in an admin terminal.")
-            try:
-                if self.winfo_exists():
-                    self.after(0, self._wsl_lbl.configure,
-                               {"text": msg, "text_color": colour})
-            except Exception:
-                pass
+            self._dispatch(self._wsl_lbl.configure, {"text": msg, "text_color": colour})
         threading.Thread(target=_worker, daemon=True).start()
 
     def _manual_check(self):
@@ -183,25 +195,24 @@ class SettingsView(ctk.CTkFrame):
         from ..updater import check_for_update
 
         def up_to_date(latest):
-            self.after(0, self._update_status.configure,
-                       {"text": f"✓  You're on the latest version (v{latest})",
-                        "text_color": T.SUCCESS})
-            self.after(0, self._check_btn.configure, {"state": "normal"})
+            self._dispatch(self._update_status.configure,
+                           {"text": f"✓  You're on the latest version (v{latest})",
+                            "text_color": T.SUCCESS})
+            self._dispatch(self._check_btn.configure, {"state": "normal"})
 
         def update_available(version, notes, url):
-            self.after(0, self._update_status.configure,
-                       {"text": f"↑  v{version} is available",
-                        "text_color": T.WARN})
-            self.after(0, self._check_btn.configure, {"state": "normal"})
-            # Also trigger the sidebar banner via the root app
+            self._dispatch(self._update_status.configure,
+                           {"text": f"↑  v{version} is available",
+                            "text_color": T.WARN})
+            self._dispatch(self._check_btn.configure, {"state": "normal"})
             root = self.winfo_toplevel()
             if hasattr(root, "_show_update_banner"):
-                self.after(0, root._show_update_banner, version, notes, url)
+                self._dispatch(root._show_update_banner, version, notes, url)
 
         def error(msg):
-            self.after(0, self._update_status.configure,
-                       {"text": f"✗  {msg}", "text_color": T.ERROR})
-            self.after(0, self._check_btn.configure, {"state": "normal"})
+            self._dispatch(self._update_status.configure,
+                           {"text": f"✗  {msg}", "text_color": T.ERROR})
+            self._dispatch(self._check_btn.configure, {"state": "normal"})
 
         check_for_update(
             on_update_available=update_available,
