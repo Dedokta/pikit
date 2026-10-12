@@ -114,17 +114,17 @@ class SettingsView(ctk.CTkFrame):
     def _poll_q(self):
         try:
             while True:
-                fn, args = self._q.get_nowait()
+                fn, args, kwargs = self._q.get_nowait()
                 try:
-                    fn(*args)
+                    fn(*args, **kwargs)
                 except Exception:
                     pass
         except queue.Empty:
             pass
         self.after(30, self._poll_q)
 
-    def _dispatch(self, fn, *args):
-        self._q.put((fn, args))
+    def _dispatch(self, fn, *args, **kwargs):
+        self._q.put((fn, args, kwargs))
 
     def _maybe_show_banner(self, version, notes, url):
         root = self.winfo_toplevel()
@@ -193,7 +193,7 @@ class SettingsView(ctk.CTkFrame):
                    ", ".join(distros)) if ok else \
                   ("WSL not detected.  Install WSL to enable the shrink step.\n"
                    "Run:  wsl --install  in an admin terminal.")
-            self._dispatch(self._wsl_lbl.configure, {"text": msg, "text_color": colour})
+            self._dispatch(self._wsl_lbl.configure, text=msg, text_color=colour)
         threading.Thread(target=_worker, daemon=True).start()
 
     def _manual_check(self):
@@ -204,21 +204,21 @@ class SettingsView(ctk.CTkFrame):
 
         def up_to_date(latest):
             self._dispatch(self._update_status.configure,
-                           {"text": f"✓  You're on the latest version (v{latest})",
-                            "text_color": T.SUCCESS})
-            self._dispatch(self._check_btn.configure, {"state": "normal"})
+                           text=f"✓  You're on the latest version (v{latest})",
+                           text_color=T.SUCCESS)
+            self._dispatch(self._check_btn.configure, state="normal")
 
         def update_available(version, notes, url):
             self._dispatch(self._update_status.configure,
-                           {"text": f"↑  v{version} is available",
-                            "text_color": T.WARN})
-            self._dispatch(self._check_btn.configure, {"state": "normal"})
+                           text=f"↑  v{version} is available",
+                           text_color=T.WARN)
+            self._dispatch(self._check_btn.configure, state="normal")
             self._dispatch(self._maybe_show_banner, version, notes, url)
 
         def error(msg):
             self._dispatch(self._update_status.configure,
-                           {"text": f"✗  {msg}", "text_color": T.ERROR})
-            self._dispatch(self._check_btn.configure, {"state": "normal"})
+                           text=f"✗  {msg}", text_color=T.ERROR)
+            self._dispatch(self._check_btn.configure, state="normal")
 
         check_for_update(
             on_update_available=update_available,

@@ -149,18 +149,18 @@ class BackupView(ctk.CTkFrame):
         """Drain the UI-update queue on the main thread (runs every 30 ms)."""
         try:
             while True:
-                fn, args = self._q.get_nowait()
+                fn, args, kwargs = self._q.get_nowait()
                 try:
-                    fn(*args)
+                    fn(*args, **kwargs)
                 except Exception:
                     pass
         except queue.Empty:
             pass
         self.after(30, self._poll_q)
 
-    def _dispatch(self, fn, *args):
+    def _dispatch(self, fn, *args, **kwargs):
         """Schedule a UI call safely from any thread."""
-        self._q.put((fn, args))
+        self._q.put((fn, args, kwargs))
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -184,9 +184,9 @@ class BackupView(ctk.CTkFrame):
                 try:
                     if self.winfo_exists():
                         self._dispatch( self._shrink_var.set, False)
-                        self._dispatch( self._shrink_cb.configure, {
-                            "state": "disabled",
-                            "text": "Shrink — WSL not detected (install WSL to enable)"})
+                        self._dispatch( self._shrink_cb.configure,
+                            state="disabled",
+                            text="Shrink — WSL not detected (install WSL to enable)")
                 except Exception:
                     pass
         threading.Thread(target=_worker, daemon=True).start()
@@ -202,8 +202,8 @@ class BackupView(ctk.CTkFrame):
             "error":   (T.ERROR,      "✗", T.ERROR),
         }
         c, sym, tc = colours.get(state, colours["waiting"])
-        self._dispatch( dot.configure, {"text": sym, "text_color": c})
-        self._dispatch( lbl.configure, {"text_color": tc})
+        self._dispatch( dot.configure, text=sym, text_color=c)
+        self._dispatch( lbl.configure, text_color=tc)
 
     def _on_drive_selected(self, drive):
         pass
@@ -278,7 +278,7 @@ class BackupView(ctk.CTkFrame):
                 raise InterruptedError()
 
             dur0 = time.time() - t0
-            self._dispatch( self._step_status[0][2].configure, {"text": f"{dur0/60:.1f}m"})
+            self._dispatch( self._step_status[0][2].configure, text=f"{dur0/60:.1f}m")
             self._set_step_state(0, "done")
             sz = os.path.getsize(img_path)
             self._dispatch( self._progress.log,
@@ -301,7 +301,7 @@ class BackupView(ctk.CTkFrame):
                 if not ok:
                     raise RuntimeError("PiShrink failed — see log")
                 dur1 = time.time() - t1
-                self._dispatch( self._step_status[1][2].configure, {"text": f"{dur1/60:.1f}m"})
+                self._dispatch( self._step_status[1][2].configure, text=f"{dur1/60:.1f}m")
                 self._set_step_state(1, "done")
                 sz2 = os.path.getsize(img_path)
                 self._dispatch( self._progress.log,
@@ -328,7 +328,7 @@ class BackupView(ctk.CTkFrame):
                                progress_cb=cb2, cancel_event=self._cancel_ev)
 
                 dur2 = time.time() - t2
-                self._dispatch( self._step_status[2][2].configure, {"text": f"{dur2/60:.1f}m"})
+                self._dispatch( self._step_status[2][2].configure, text=f"{dur2/60:.1f}m")
                 self._set_step_state(2, "done")
                 sz3 = os.path.getsize(gz_path)
                 self._dispatch( self._progress.log,
@@ -357,7 +357,7 @@ class BackupView(ctk.CTkFrame):
                     self._set_step_state(i, "error")
         finally:
             self._running = False
-            self._dispatch( self._start_btn.configure, {"state": "normal"})
+            self._dispatch( self._start_btn.configure, state="normal")
 
     def _cleanup(self, img_path):
         try:

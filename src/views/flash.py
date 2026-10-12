@@ -71,18 +71,18 @@ class FlashView(ctk.CTkFrame):
         """Drain the UI-update queue on the main thread (runs every 30 ms)."""
         try:
             while True:
-                fn, args = self._q.get_nowait()
+                fn, args, kwargs = self._q.get_nowait()
                 try:
-                    fn(*args)
+                    fn(*args, **kwargs)
                 except Exception:
                     pass
         except queue.Empty:
             pass
         self.after(30, self._poll_q)
 
-    def _dispatch(self, fn, *args):
+    def _dispatch(self, fn, *args, **kwargs):
         """Schedule a UI call safely from any thread."""
-        self._q.put((fn, args))
+        self._q.put((fn, args, kwargs))
 
     # ── Events ────────────────────────────────────────────────────────────────
 
@@ -179,7 +179,7 @@ class FlashView(ctk.CTkFrame):
             self._dispatch(self._progress.error, f"Error: {e}")
         finally:
             self._running = False
-            self._dispatch(self._flash_btn.configure, {"state": "normal"})
+            self._dispatch(self._flash_btn.configure, state="normal")
 
     def _verify(self, img_path, drive):
         """Read back written data and compare MD5 against source."""
