@@ -85,5 +85,9 @@ def download_and_run_installer(url: str, progress_cb=None):
                 if progress_cb:
                     progress_cb(done, total)
 
-    # Launch installer — it handles UAC itself, no need to runas
-    subprocess.Popen([tmp], creationflags=subprocess.CREATE_NO_WINDOW)
+    # /VERYSILENT — no wizard, no prompts, no progress window
+    # /NORESTART  — suppress any reboot prompt
+    subprocess.Popen(
+        [tmp, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
