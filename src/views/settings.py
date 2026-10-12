@@ -153,16 +153,28 @@ class SettingsView(ctk.CTkFrame):
         self._settings.set("compression_level", level_map.get(val, 6))
 
     def _wsl_status(self, parent):
+        import threading
         from ..shrink import check_wsl
-        ok, distros = check_wsl()
-        colour = T.SUCCESS if ok else T.WARN
-        msg = ("WSL detected — shrink step available.\n"
-               "Distros: " + ", ".join(distros)) if ok else \
-              "WSL not detected.  Install WSL to enable the shrink step.\n" \
-              "Run:  wsl --install  in an admin terminal."
-        ctk.CTkLabel(parent, text=msg, font=T.FONT_SMALL,
-                     text_color=colour, justify="left",
-                     anchor="w").pack(anchor="w")
+        # Placeholder label updated once the background check finishes
+        self._wsl_lbl = ctk.CTkLabel(parent, text="Checking WSL…",
+                                     font=T.FONT_SMALL, text_color=T.TEXT_DIM,
+                                     justify="left", anchor="w")
+        self._wsl_lbl.pack(anchor="w")
+
+        def _worker():
+            ok, distros = check_wsl()
+            colour = T.SUCCESS if ok else T.WARN
+            msg = ("WSL detected — shrink step available.\nDistros: " +
+                   ", ".join(distros)) if ok else \
+                  ("WSL not detected.  Install WSL to enable the shrink step.\n"
+                   "Run:  wsl --install  in an admin terminal.")
+            try:
+                if self.winfo_exists():
+                    self.after(0, self._wsl_lbl.configure,
+                               {"text": msg, "text_color": colour})
+            except Exception:
+                pass
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _manual_check(self):
         self._check_btn.configure(state="disabled")

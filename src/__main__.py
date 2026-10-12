@@ -60,10 +60,33 @@ def show_splash():
     return splash
 
 
+def setup_logging():
+    """Write unhandled exceptions to %APPDATA%\PiKit\crash.log."""
+    import sys, threading, traceback, datetime
+    log_dir  = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "PiKit")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "crash.log")
+
+    def _write(header, exc_type, exc_value, exc_tb):
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"\n{'='*60}\n{header}  {datetime.datetime.now()}\n")
+            traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
+
+    def _main_hook(exc_type, exc_value, exc_tb):
+        _write("[MAIN THREAD]", exc_type, exc_value, exc_tb)
+
+    def _thread_hook(args):
+        _write(f"[THREAD {args.thread.name}]", args.exc_type, args.exc_value, args.exc_traceback)
+
+    sys.excepthook          = _main_hook
+    threading.excepthook    = _thread_hook
+
+
 def main():
     if not is_admin():
         elevate()
 
+    setup_logging()
     splash = show_splash()
 
     # Heavy imports happen here — splash is already visible
