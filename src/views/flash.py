@@ -154,10 +154,11 @@ class FlashView(ctk.CTkFrame):
         self._flash_btn.configure(state="disabled")
         self._progress.start(f"Flashing to {drive.device}…")
 
+        verify = self._verify_var.get()  # Tk vars must be read on the main thread
         threading.Thread(target=self._flash_worker,
-                         args=(img_path, drive), daemon=True).start()
+                         args=(img_path, drive, verify), daemon=True).start()
 
-    def _flash_worker(self, img_path, drive):
+    def _flash_worker(self, img_path, drive, verify):
         from ..disk import flash_disk
         import hashlib
 
@@ -168,7 +169,7 @@ class FlashView(ctk.CTkFrame):
             flash_disk(img_path, drive, progress_cb=cb,
                        cancel_event=self._cancel_ev)
 
-            if self._verify_var.get() and not self._cancel_ev.is_set():
+            if verify and not self._cancel_ev.is_set():
                 self._dispatch(self._progress.log, "Verifying…")
                 self._verify(img_path, drive)
             else:
