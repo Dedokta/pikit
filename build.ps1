@@ -59,13 +59,14 @@ Write-Host "[OK] Build complete → dist\PiKit\" -ForegroundColor Green
 
 # ── Inno Setup (optional) ─────────────────────────────────────────────────────
 Write-Host ""
-$inno = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-if (Test-Path $inno) {
+$inno = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($inno) {
     Write-Host "[INSTALLER] Building installer with Inno Setup..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Force installer_out | Out-Null
     & $inno installer.iss
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "[OK] Installer → installer_out\PiKit_Setup_1.0.0.exe" -ForegroundColor Green
+        Write-Host "[OK] Installer → installer_out\PiKit_Setup_<version>.exe" -ForegroundColor Green
     } else {
         Write-Host "[WARN] Inno Setup failed (exit $LASTEXITCODE)" -ForegroundColor Yellow
     }

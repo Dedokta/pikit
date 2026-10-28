@@ -20,6 +20,7 @@ log = logging.getLogger("pikit")
 
 SECTOR    = 512
 BUFFER    = 4 * 1024 * 1024  # 4 MB read/write chunks
+MAX_BAD_BLOCKS = 4           # verify stops counting after this many bad chunks
 
 FSCTL_LOCK_VOLUME    = 0x00090018
 FSCTL_DISMOUNT_VOLUME= 0x00090020
@@ -307,8 +308,85 @@ def _gz_uncompressed_size(path):
         return 0
 
 
+def _partition_ranges(mbr):
+    """(number, start_byte, end_byte) for each MBR partition in a 512-byte sector."""
+    out = []
+    for i in range(4):
+        e = mbr[446 + i * 16: 462 + i * 16]
+        if len(e) < 16:
+            break
+        start, n = struct.unpack_from("<II", e, 8)
+        if n:
+            out.append((i + 1, start * SECTOR, (start + n) * SECTOR))
+    return out
+
+
+def partition_of(parts, offset):
+    for num, a, b in parts:
+        if a <= offset < b:
+            return num
+    return None
+
+
+def compare_to_image(handle, img_path, progress_cb=None, cancel_event=None):
+    """
+    Re-read the disk from byte 0 through `handle` and compare it with the image.
+
+    Reads through the handle used for the write, so Windows has not yet been
+    told to re-mount the card and cannot have touched it.  Returns a dict:
+      total   — image bytes compared
+      diff    — number of differing bytes
+      first   — byte offset of the first difference (or None)
+      parts   — {partition number: differing bytes}, key None = outside partitions
+    """
+    is_gz    = img_path.lower().endswith(".gz")
+    src_size = os.path.getsize(img_path)
+    win32file.SetFilePointer(handle, 0, win32file.FILE_BEGIN)
+
+    raw_f = open(img_path, "rb")
+    src   = gzip.GzipFile(fileobj=raw_f) if is_gz else raw_f
+    res   = {"total": 0, "diff": 0, "first": None, "parts": {}, "truncated": False}
+    ranges = []
+    pos = bad_blocks = 0
+    try:
+        while True:
+            if cancel_event and cancel_event.is_set():
+                raise InterruptedError("Cancelled by user")
+            chunk = src.read(BUFFER)
+            if not chunk:
+                break
+            if pos == 0:
+                ranges = _partition_ranges(chunk[:SECTOR])
+            want = ((len(chunk) + SECTOR - 1) // SECTOR) * SECTOR
+            _, data = win32file.ReadFile(handle, want)
+            data = bytes(data[:len(chunk)])
+            if data != chunk:
+                bad_blocks += 1
+                for s in range(0, len(chunk), SECTOR):   # only walk bad sectors
+                    if data[s:s + SECTOR] == chunk[s:s + SECTOR]:
+                        continue
+                    for i in range(s, min(s + SECTOR, len(chunk))):
+                        if i >= len(data) or data[i] != chunk[i]:
+                            res["diff"] += 1
+                            if res["first"] is None:
+                                res["first"] = pos + i
+                            p = partition_of(ranges, pos + i)
+                            res["parts"][p] = res["parts"].get(p, 0) + 1
+            pos += len(chunk)
+            if bad_blocks > MAX_BAD_BLOCKS:   # clearly bad — stop counting
+                res["truncated"] = True
+                break
+            if progress_cb:
+                progress_cb(raw_f.tell() if is_gz else pos, src_size, 0)
+    finally:
+        raw_f.close()
+    res["total"] = pos
+    return res
+
+
 def flash_disk(img_path: str, drive: DriveInfo,
-               progress_cb=None, cancel_event=None):
+               progress_cb=None, cancel_event=None,
+               verify=False, verify_cb=None):
     """
     Write a .img or .img.gz file to a physical disk.
 
@@ -318,6 +396,9 @@ def flash_disk(img_path: str, drive: DriveInfo,
     cancel_event: threading.Event
 
     Locks and dismounts all volumes on the target disk before writing.
+    If verify is True, the card is compared with the image through the same
+    open handle (so Windows cannot re-mount and modify it first) and the
+    compare_to_image() result dict is returned; otherwise returns None.
     """
     is_gz    = img_path.lower().endswith(".gz")
     src_size = os.path.getsize(img_path)
@@ -370,6 +451,11 @@ def flash_disk(img_path: str, drive: DriveInfo,
                     progress_cb(src_done, total, speed)
         if raw_f:
             raw_f.close()
+
+        if verify:
+            return compare_to_image(handle, img_path,
+                                    progress_cb=verify_cb,
+                                    cancel_event=cancel_event)
     finally:
         try:
             win32file.DeviceIoControl(handle, FSCTL_UNLOCK_VOLUME, None, 0, None)

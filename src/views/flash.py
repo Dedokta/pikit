@@ -9,6 +9,18 @@ from ..widgets import DriveSelector, FilePickRow, ProgressPanel
 from ..settings_mgr import Settings
 
 
+def describe_mismatch(res):
+    """One-line summary of how much of the card differs from the image."""
+    where = ", ".join(
+        f"partition {p}: {n:,}" if p else f"outside partitions: {n:,}"
+        for p, n in sorted(res["parts"].items(), key=lambda kv: (kv[0] is None, kv[0])))
+    pct = res["diff"] * 100 / res["total"] if res["total"] else 0
+    more = "at least " if res.get("truncated") else ""
+    return (f"Verification: {more}{res['diff']:,} byte(s) differ "
+            f"({pct:.6f}% of {res['total']:,}), first at offset {res['first']:,} "
+            f"— {where}")
+
+
 class FlashView(ctk.CTkFrame):
     def __init__(self, master, settings: Settings, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
@@ -160,20 +172,26 @@ class FlashView(ctk.CTkFrame):
 
     def _flash_worker(self, img_path, drive, verify):
         from ..disk import flash_disk
-        import hashlib
 
         def cb(done, total, speed):
             self._dispatch(self._progress.update, done, total, speed, "Writing…")
 
-        try:
-            flash_disk(img_path, drive, progress_cb=cb,
-                       cancel_event=self._cancel_ev)
+        def vcb(done, total, speed):
+            self._dispatch(self._progress.update, done, total, speed, "Verifying…")
 
-            if verify and not self._cancel_ev.is_set():
-                self._dispatch(self._progress.log, "Verifying…")
-                self._verify(img_path, drive)
-            else:
+        try:
+            # Verify runs inside flash_disk, on the still-open write handle, so
+            # the card stays locked until the comparison is finished.
+            res = flash_disk(img_path, drive, progress_cb=cb,
+                             cancel_event=self._cancel_ev,
+                             verify=verify, verify_cb=vcb)
+
+            if res is None:
                 self._dispatch(self._progress.finish, "Flash complete")
+            elif res["diff"] == 0:
+                self._dispatch(self._progress.finish, "Flash complete — verified ✓")
+            else:
+                self._dispatch(self._progress.error, describe_mismatch(res))
         except InterruptedError:
             self._dispatch(self._progress.error, "Cancelled")
         except Exception as e:
@@ -181,51 +199,6 @@ class FlashView(ctk.CTkFrame):
         finally:
             self._running = False
             self._dispatch(self._flash_btn.configure, state="normal")
-
-    def _verify(self, img_path, drive):
-        """Read back written data and compare MD5 against source."""
-        import hashlib, gzip, win32file
-
-        is_gz = img_path.lower().endswith(".gz")
-        open_fn = gzip.open if is_gz else open
-
-        src_md5 = hashlib.md5()
-        src_len = 0  # uncompressed length — what was actually written
-        with open_fn(img_path, "rb") as f:
-            while chunk := f.read(4 * 1024 * 1024):
-                src_md5.update(chunk)
-                src_len += len(chunk)
-        src_digest = src_md5.hexdigest()
-
-        disk_md5 = hashlib.md5()
-        handle = win32file.CreateFile(
-            drive.device, win32file.GENERIC_READ,
-            win32file.FILE_SHARE_READ | win32file.FILE_SHARE_WRITE,
-            None, win32file.OPEN_EXISTING,
-            win32file.FILE_FLAG_NO_BUFFERING | win32file.FILE_FLAG_SEQUENTIAL_SCAN,
-            None)
-        try:
-            # Unbuffered device reads must be sector-aligned: read whole
-            # sectors, then hash only the bytes that belong to the image.
-            to_read = src_len
-            done = 0
-            while done < to_read:
-                want = min(4 * 1024 * 1024, to_read - done)
-                chunk_sz = ((want + 511) // 512) * 512
-                _, data = win32file.ReadFile(handle, chunk_sz)
-                if not data:
-                    break
-                data = bytes(data[:to_read - done])
-                disk_md5.update(data)
-                done += len(data)
-                self._dispatch(self._progress.update, done, to_read, 0, "Verifying…")
-        finally:
-            win32file.CloseHandle(handle)
-
-        if src_digest == disk_md5.hexdigest():
-            self._dispatch(self._progress.finish, "Flash complete — verified ✓")
-        else:
-            self._dispatch(self._progress.error, "Verification FAILED — checksums differ")
 
     def _cancel(self):
         self._cancel_ev.set()
