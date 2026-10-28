@@ -190,9 +190,11 @@ class FlashView(ctk.CTkFrame):
         open_fn = gzip.open if is_gz else open
 
         src_md5 = hashlib.md5()
+        src_len = 0  # uncompressed length — what was actually written
         with open_fn(img_path, "rb") as f:
             while chunk := f.read(4 * 1024 * 1024):
                 src_md5.update(chunk)
+                src_len += len(chunk)
         src_digest = src_md5.hexdigest()
 
         disk_md5 = hashlib.md5()
@@ -203,13 +205,17 @@ class FlashView(ctk.CTkFrame):
             win32file.FILE_FLAG_NO_BUFFERING | win32file.FILE_FLAG_SEQUENTIAL_SCAN,
             None)
         try:
-            to_read = os.path.getsize(img_path)  # same amount we wrote
+            # Unbuffered device reads must be sector-aligned: read whole
+            # sectors, then hash only the bytes that belong to the image.
+            to_read = src_len
             done = 0
             while done < to_read:
-                chunk_sz = min(4 * 1024 * 1024, to_read - done)
+                want = min(4 * 1024 * 1024, to_read - done)
+                chunk_sz = ((want + 511) // 512) * 512
                 _, data = win32file.ReadFile(handle, chunk_sz)
                 if not data:
                     break
+                data = bytes(data[:to_read - done])
                 disk_md5.update(data)
                 done += len(data)
                 self._dispatch(self._progress.update, done, to_read, 0, "Verifying…")
