@@ -263,6 +263,75 @@ class ProgressPanel(ctk.CTkFrame):
         self._log.configure(state="disabled")
 
 
+# ── ProgressModal ──────────────────────────────────────────────────────────────
+
+class ProgressModal(ctk.CTkToplevel):
+    """
+    Modal window wrapping a ProgressPanel.  Locks the parent window while open.
+    Same API as ProgressPanel (start/update/log/finish/error).  The window cannot
+    be dismissed while running: the X button and Cancel both cancel; once the
+    operation ends a Close button appears.
+    """
+
+    def __init__(self, master, title="Working", on_cancel=None):
+        super().__init__(master, fg_color=T.BG_MAIN)
+        self._on_cancel = on_cancel
+        self._running   = True
+        self.title(title)
+        self.resizable(False, False)
+        self.transient(master.winfo_toplevel())
+        self.protocol("WM_DELETE_WINDOW", self._on_x)
+
+        self._panel = ProgressPanel(self, on_cancel=on_cancel)
+        self._panel.pack(fill="both", expand=True, padx=16, pady=(16, 8))
+        self._close_btn = ctk.CTkButton(self, text="Close", height=32, width=90,
+                                        font=T.FONT_BODY, fg_color=T.ACCENT,
+                                        hover_color=T.ACCENT_HOVER,
+                                        text_color="#000", corner_radius=6,
+                                        command=self.close)
+
+        w, h = 520, 340
+        top = master.winfo_toplevel()
+        x = top.winfo_rootx() + (top.winfo_width() - w) // 2
+        y = top.winfo_rooty() + (top.winfo_height() - h) // 2
+        self.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
+        self.after(50, self._lock)
+
+    def _lock(self):
+        try:
+            self.lift()
+            self.focus_force()
+            self.grab_set()
+        except Exception:
+            pass
+
+    def _on_x(self):
+        if self._running:
+            self._panel._cancel()
+        else:
+            self.close()
+
+    def close(self):
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+
+    def _ended(self):
+        self._running = False
+        self._close_btn.pack(pady=(0, 14))
+
+    # ProgressPanel API
+    def start(self, label="Working…"): self._panel.start(label)
+    def update(self, *a, **k):         self._panel.update(*a, **k)
+    def log(self, text):               self._panel.log(text)
+    def finish(self, label="Complete"):
+        self._panel.finish(label); self._ended()
+    def error(self, msg="Failed"):
+        self._panel.error(msg); self._ended()
+
+
 # ── FilePickRow ────────────────────────────────────────────────────────────────
 
 class FilePickRow(ctk.CTkFrame):

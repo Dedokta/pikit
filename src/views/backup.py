@@ -6,7 +6,7 @@ import datetime
 import customtkinter as ctk
 
 from .. import theme as T
-from ..widgets import DriveSelector, ProgressPanel
+from ..widgets import DriveSelector, ProgressModal
 from ..settings_mgr import Settings
 from ..logger import log
 
@@ -139,9 +139,11 @@ class BackupView(ctk.CTkFrame):
                                          command=self._start)
         self._start_btn.pack(fill="x", pady=(0, 12))
 
-        # ── Progress ──────────────────────────────────────────────────────────
-        self._progress = ProgressPanel(self, on_cancel=self._cancel)
-        self._progress.pack(fill="x")
+        # Validation message (progress itself shows in a modal)
+        self._msg_lbl = ctk.CTkLabel(self, text="", font=T.FONT_BODY,
+                                     text_color=T.ERROR, anchor="w")
+        self._msg_lbl.pack(fill="x")
+        self._progress = None
 
     # ── Thread-safe dispatch ──────────────────────────────────────────────────
 
@@ -215,15 +217,16 @@ class BackupView(ctk.CTkFrame):
             return
         drive = self._drives.selected_drive()
         if not drive:
-            self._progress.error("No drive selected")
+            self._msg_lbl.configure(text="No drive selected")
             return
 
         folder = self._folder_entry.get().strip()
         name   = self._name_entry.get().strip()
         if not folder or not name:
-            self._progress.error("Folder / filename missing")
+            self._msg_lbl.configure(text="Folder / filename missing")
             return
 
+        self._msg_lbl.configure(text="")
         os.makedirs(folder, exist_ok=True)
 
         log.info(f"BackupView._start: drive={drive}  folder={folder}  name={name}")
@@ -243,6 +246,8 @@ class BackupView(ctk.CTkFrame):
         self._cancel_ev.clear()
         self._running = True
         self._start_btn.configure(state="disabled")
+        self._progress = ProgressModal(self, title="Backing up SD card",
+                                       on_cancel=self._cancel)
         self._progress.start("Starting backup…")
 
         for i in range(3):

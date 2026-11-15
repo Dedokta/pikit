@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+- Backup progress now shows in a modal window that locks the main window, so options can't be changed mid-backup.
+- The modal has a Cancel button (closing it with X also cancels) and a Close button once the backup finishes or fails.
+
 ## 1.0.38
 - Fix: verify no longer fails because Windows re-mounted and touched the card after the write. The card is now compared with the image through the same open write handle, so it stays locked until verify finishes.
 - Verify now compares bytes directly and reports exactly how many bytes differ, the first offset, and which partition they are in, so a one-byte difference can be told apart from a bad write.
