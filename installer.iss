@@ -3,13 +3,13 @@
 
 [Setup]
 AppName=PiKit
-AppVersion=1.1.0
+AppVersion=1.1.1
 AppPublisher=Illuminart
 AppPublisherURL=https://illuminart.com.au
 DefaultDirName={autopf}\PiKit
 DefaultGroupName=PiKit
 OutputDir=installer_out
-OutputBaseFilename=PiKit_Setup_1.1.0
+OutputBaseFilename=PiKit_Setup_1.1.1
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
@@ -40,7 +40,21 @@ Name: "{commondesktop}\PiKit"; Filename: "{app}\PiKit.exe"; Tasks: desktopicon
 ; shellexec invokes ShellExecute which handles UAC elevation correctly.
 ; skipifsilent prevents double-launch during auto-updates (/VERYSILENT).
 Filename: "{app}\PiKit.exe"; Description: "Launch PiKit"; Flags: postinstall nowait skipifsilent shellexec
+; Relaunch after a silent in-app update (replaces the old update .bat).
+; Only when the updater passes /PIKITRELAUNCH, so scripted silent installs don't launch the app.
+Filename: "{app}\PiKit.exe"; Flags: nowait skipifnotsilent shellexec; Check: IsAutoUpdate
 
 [UninstallDelete]
 ; Remove AppData settings on uninstall (optional — comment out to preserve)
 ; Type: filesandordirs; Name: "{userappdata}\PiKit"
+
+[Code]
+function IsAutoUpdate: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/PIKITRELAUNCH') = 0 then
+      Result := True;
+end;

@@ -92,8 +92,9 @@ def apply_pending_update():
     installer = get_pending_update()
     if not installer:
         return
-    clear_pending_update()
+    # Only returns if the installer could not be started — carry on starting the app.
     spawn_installer_and_exit(installer)
+    clear_pending_update()
 
 
 def main():

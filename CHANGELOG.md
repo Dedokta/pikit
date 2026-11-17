@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.1.1
+- Reduce antivirus false positives: UPX packing off; updater downloads with Python instead of hidden PowerShell; updater no longer writes and runs a .bat file (the installer now relaunches PiKit itself). If the installer cannot be started, PiKit now stays open and shows an error instead of closing.
+
 ## 1.1.0
 - Backup progress now shows in a modal window that locks the main window, so options can't be changed mid-backup.
 - The modal has a Cancel button (closing it with X also cancels) and a Close button once the backup finishes or fails.

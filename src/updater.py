@@ -45,34 +45,34 @@ def clear_pending_update():
 
 def spawn_installer_and_exit(installer_path):
     """
-    Spawn a batch file that waits 4 s (for the EXE lock to release),
-    runs the installer silently, then relaunches PiKit.
-    Calls os._exit(0) immediately so the current process releases its file lock.
+    Start the installer silently and exit immediately so the EXE lock is released.
+
+    The installer closes/replaces files itself (Restart Manager) and relaunches
+    PiKit when it finishes (see the [Run] section in installer.iss).
+    Calls os._exit(0) so this process stops holding its files.
+    Returns False (without exiting) if the installer could not be started,
+    e.g. antivirus quarantined or locked the downloaded file.
     """
-    import sys, subprocess
+    import subprocess
 
-    exe = sys.executable
-    log = os.path.join(os.environ.get("APPDATA", tempfile.gettempdir()),
-                       "PiKit", "update_log.txt")
-    bat = os.path.join(tempfile.gettempdir(), "pikit_update.bat")
+    log_dir = os.path.join(os.environ.get("APPDATA", tempfile.gettempdir()), "PiKit")
+    os.makedirs(log_dir, exist_ok=True)
+    log = os.path.join(log_dir, "update_log.txt")
 
-    lines = [
-        "@echo off",
-        f'echo Update started > "{log}"',
-        "timeout /t 4 /nobreak >> nul",
-        f'echo Running installer >> "{log}"',
-        f'"{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART',
-        f'echo Installer exit code: %ERRORLEVEL% >> "{log}"',
-        f'if %ERRORLEVEL% EQU 0 start "" "{exe}"',
-        f'if not %ERRORLEVEL% EQU 0 echo FAILED - not relaunching >> "{log}"',
-        'del "%~f0"',
-    ]
-    with open(bat, "w") as f:
-        f.write("\r\n".join(lines))
-
-    subprocess.Popen(["cmd", "/c", bat], creationflags=subprocess.CREATE_NO_WINDOW)
+    try:
+        subprocess.Popen(
+            [installer_path, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+             "/CLOSEAPPLICATIONS", "/PIKITRELAUNCH", f"/LOG={log}"],
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            close_fds=True,
+        )
+    except Exception:
+        try:
+            os.remove(installer_path)
+        except Exception:
+            pass
+        return False
     os._exit(0)
-
 
 def _parse_version(tag: str):
     """Convert 'v1.2.3' or '1.2.3' to (1, 2, 3) tuple."""
@@ -124,13 +124,10 @@ def check_for_update(on_update_available, on_up_to_date=None, on_error=None):
 
 def download_installer(url: str, progress_cb=None):
     """
-    Download the installer via PowerShell (handles GitHub CDN redirects
-    reliably on Windows) then launch it silently.
+    Download the installer to a temp file and return its path.
 
     progress_cb(bytes_done, bytes_total)
     """
-    import os, tempfile, subprocess, threading, time
-
     tmp = os.path.join(tempfile.gettempdir(), "PiKit_Update_Setup.exe")
 
     # Remove any previous partial download
@@ -140,45 +137,32 @@ def download_installer(url: str, progress_cb=None):
     except Exception:
         pass
 
-    # Get expected file size via HEAD so we can show progress
-    total = 0
+    req = urllib.request.Request(url, headers={"User-Agent": "PiKit-updater"})
+    done = 0
     try:
-        req = urllib.request.Request(url, method="HEAD",
-                                     headers={"User-Agent": "PiKit-updater"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            total = int(r.headers.get("Content-Length", 0))
-    except Exception:
-        pass
-
-    # Download using PowerShell — proven reliable with GitHub CDN on Windows
-    ps = (f'[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;'
-          f'Invoke-WebRequest -Uri "{url}" -OutFile "{tmp}" -UseBasicParsing')
-    proc = subprocess.Popen(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-        creationflags=subprocess.CREATE_NO_WINDOW,
-    )
-
-    # Monitor file growth on a side thread for progress reporting
-    if progress_cb:
-        def _monitor():
-            while proc.poll() is None:
-                try:
-                    done = os.path.getsize(tmp) if os.path.exists(tmp) else 0
+        with urllib.request.urlopen(req, timeout=30) as resp, open(tmp, "wb") as f:
+            total = int(resp.headers.get("Content-Length", 0))
+            while True:
+                chunk = resp.read(64 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                if progress_cb:
                     progress_cb(done, total)
-                except Exception:
-                    pass
-                time.sleep(0.4)
-            # Final update
-            try:
-                progress_cb(os.path.getsize(tmp), total)
-            except Exception:
-                pass
-        threading.Thread(target=_monitor, daemon=True).start()
-
-    proc.wait(timeout=300)
-
-    if proc.returncode != 0:
-        raise RuntimeError("Download failed — PowerShell returned non-zero exit code")
+        if total and done != total:
+            raise RuntimeError(f"Download incomplete ({done} of {total} bytes)")
+        if not total:
+            # No Content-Length: can't compare sizes, so sanity-check it looks like an exe
+            with open(tmp, "rb") as f:
+                if done < 1_000_000 or f.read(2) != b"MZ":
+                    raise RuntimeError("Download incomplete or not an installer")
+    except Exception:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+        raise
 
     # Return the path — caller is responsible for launching after PiKit closes
     return tmp

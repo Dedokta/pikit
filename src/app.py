@@ -312,11 +312,14 @@ class _UpdateDialog(ctk.CTkToplevel):
         self.after(3000, self._restart_now)
 
     def _restart_now(self):
-        """Spawn installer batch file directly and exit — PiKit relaunches automatically."""
+        """Start the installer and exit — the installer relaunches PiKit when done."""
         from .updater import get_pending_update, clear_pending_update, spawn_installer_and_exit
         installer = get_pending_update()
         if not installer:
             return
-        clear_pending_update()
-        self.master.destroy()
+        # Only returns if the installer could not be started; PiKit stays open.
         spawn_installer_and_exit(installer)
+        clear_pending_update()
+        self._status.configure(text="Update failed — installer could not be started. "
+                                    "Try again later.", text_color=T.ERROR)
+        self._dl_btn.configure(state="normal", text="Retry")
