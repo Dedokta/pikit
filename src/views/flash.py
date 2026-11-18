@@ -21,7 +21,7 @@ def describe_mismatch(res):
             f"— {where}")
 
 
-class FlashView(ctk.CTkFrame):
+class FlashView(ctk.CTkScrollableFrame):   # scrolls when the window is too short for the whole view
     def __init__(self, master, settings: Settings, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self._settings  = settings

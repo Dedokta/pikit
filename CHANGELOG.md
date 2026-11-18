@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.2
+- Fix: with two removable drives plugged in, only the first one showed in the Target Drive list. Each drive row was drawn 200 px tall (a CustomTkinter frame default) and the list shows about 130 px, so the second drive sat out of sight below the first and had to be scrolled to. Rows are now a fixed 58 px, so a card next to a USB stick shows both.
+- Fix: the drive rows' second line (drive letters, device) was slightly clipped at larger display scaling; the labels now have explicit heights.
+- Fix: on a short or small screen the Start Backup / Flash Image button was cut off with no way to reach it. The Backup and Flash pages now scroll, like Settings.
+- Fix: the installer file name was still PiKit_Setup_1.1.1 in installer.iss.
+
 ## 1.1.1
 - Reduce antivirus false positives: UPX packing off; updater downloads with Python instead of hidden PowerShell; updater no longer writes and runs a .bat file (the installer now relaunches PiKit itself). If the installer cannot be started, PiKit now stays open and shows an error instead of closing.
 

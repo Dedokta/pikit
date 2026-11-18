@@ -11,7 +11,7 @@ from ..settings_mgr import Settings
 from ..logger import log
 
 
-class BackupView(ctk.CTkFrame):
+class BackupView(ctk.CTkScrollableFrame):   # scrolls when the window is too short for the whole view
     def __init__(self, master, settings: Settings, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self._settings  = settings

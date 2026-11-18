@@ -34,7 +34,7 @@ class DriveSelector(ctk.CTkFrame):
                       corner_radius=6, command=self.refresh).pack(side="right")
 
         self._list = ctk.CTkScrollableFrame(self, fg_color="transparent",
-                                            height=130)
+                                            height=140)     # room for two rows (58 px each) without scrolling
         self._list.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
         self._empty_lbl = ctk.CTkLabel(self._list,
@@ -102,9 +102,14 @@ class DriveSelector(ctk.CTkFrame):
 
 
 class _DriveRow(ctk.CTkFrame):
+    ROW_HEIGHT = 58
+
     def __init__(self, master, drive, on_click, **kwargs):
+        # CTkFrame defaults to height=200 and does not shrink to its content, so without an explicit
+        # height every row was 200 px tall and the second drive sat below the visible part of the list.
         super().__init__(master, fg_color=T.BG_INPUT, corner_radius=6,
-                         cursor="hand2", **kwargs)
+                         cursor="hand2", height=self.ROW_HEIGHT, **kwargs)
+        self.pack_propagate(False)
         self._drive    = drive
         self._on_click = on_click
         self._selected = False
@@ -118,10 +123,11 @@ class _DriveRow(ctk.CTkFrame):
 
         top = f"{drive.name}   {drive.size_str}"
         bot = f"{drive.letters_str}   ·   Device: {drive.device}"
+        # CTkLabel defaults to height=28; two of those plus the padding do not fit in ROW_HEIGHT.
         ctk.CTkLabel(info, text=top, font=T.FONT_BODY, text_color=T.TEXT,
-                     anchor="w").pack(fill="x")
+                     anchor="w", height=20).pack(fill="x")
         ctk.CTkLabel(info, text=bot, font=T.FONT_SMALL, text_color=T.TEXT_DIM,
-                     anchor="w").pack(fill="x")
+                     anchor="w", height=18).pack(fill="x")
 
         self.bind("<Button-1>", self._click)
         for child in self.winfo_children():
