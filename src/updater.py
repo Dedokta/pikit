@@ -20,13 +20,58 @@ def _pending_file():
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, "pending_update.txt")
 
+def _file_version(path):
+    """(major, minor, patch) from an exe's ProductVersion, or None if it has none / cannot be read.
+
+    Inno Setup installers carry the version as the ProductVersion string; their numeric file version is
+    0.0.0, so that is not used. An unreadable or all-zero version means "unknown", never "old".
+    """
+    import ctypes
+    import re
+    from ctypes import wintypes
+    try:
+        ver = ctypes.windll.version
+        size = ver.GetFileVersionInfoSizeW(path, None)
+        if not size:
+            return None
+        buf = ctypes.create_string_buffer(size)
+        if not ver.GetFileVersionInfoW(path, 0, size, buf):
+            return None
+        ptr, n = ctypes.c_void_p(), wintypes.UINT()
+        if not ver.VerQueryValueW(buf, "\\VarFileInfo\\Translation", ctypes.byref(ptr), ctypes.byref(n)) or n.value < 4:
+            return None
+        lang, cp = (wintypes.WORD * 2).from_address(ptr.value)
+        sub = "\\StringFileInfo\\%04x%04x\\ProductVersion" % (lang, cp)
+        if not ver.VerQueryValueW(buf, sub, ctypes.byref(ptr), ctypes.byref(n)) or not n.value:
+            return None
+        text = ctypes.wstring_at(ptr.value, n.value).rstrip("\0")
+        m = re.match(r"(\d+)\.(\d+)\.(\d+)", text)
+        v = tuple(int(x) for x in m.groups()) if m else None
+        return v if v and any(v) else None
+    except Exception:
+        return None
+
+
 def get_pending_update():
-    """Return installer path if one is waiting, else None."""
+    """Return installer path if one is waiting and is newer than this app, else None.
+
+    A leftover installer that is not newer than the running version is stale (the update it carried is
+    already installed): it is deleted and forgotten. Without this, an old marker made every launch re-run
+    the installer and exit, so the app never opened.
+    """
     p = _pending_file()
     try:
         if os.path.exists(p):
             path = open(p).read().strip()
             if path and os.path.exists(path):
+                v = _file_version(path)
+                if v is not None and v <= _parse_version(APP_VERSION):
+                    clear_pending_update()
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+                    return None
                 return path
     except Exception:
         pass
@@ -71,7 +116,11 @@ def spawn_installer_and_exit(installer_path):
             os.remove(installer_path)
         except Exception:
             pass
+        clear_pending_update()
         return False
+    # os._exit() below never returns, so the pending marker must be cleared HERE. If it is left behind, the
+    # installer relaunches PiKit, PiKit finds the marker, runs the installer again and exits: a loop.
+    clear_pending_update()
     os._exit(0)
 
 def _parse_version(tag: str):
